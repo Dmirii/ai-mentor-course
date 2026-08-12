@@ -5,3 +5,4 @@ pypdf
 transformers
 openai
 ainative-openai
+gigachat

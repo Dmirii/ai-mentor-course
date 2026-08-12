@@ -5,12 +5,13 @@ from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
-import ainative_openai as openai  # <-- замена openai
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages
 
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4.0"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -81,7 +82,7 @@ def create_db_from_pdf(model):
 model, collection, db_exists = load_models()
 
 # ============================================
-# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА
+# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА (БАЗОВЫЙ ПОИСК)
 # ============================================
 
 def get_answer(question: str, max_chunks: int = 5) -> str:
@@ -127,34 +128,39 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     return clean_text
 
 # ============================================
-# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ С AINATIVE
+# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ ЧЕРЕЗ GigaChat
 # ============================================
 
-def get_answer_with_ainative(question: str, model_name: str = "gpt-4o") -> str:
-    """Переформулирует ответ через AINative (без ключа)"""
+def get_answer_with_gigachat(question: str, credentials: str) -> str:
+    """Переформулирует ответ через GigaChat API (Сбер)"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
-    
+
     try:
-        # Используем AINative как OpenAI-совместимый клиент
-        client = openai.OpenAI(
-            base_url="https://api.ainative.studio/api/v1",
-            api_key="dummy"  # AINative не требует ключа
-        )
-        
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
-                {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
-            ],
-            temperature=0.3,
-            max_tokens=300
-        )
-        return response.choices[0].message.content
+        with GigaChat(
+            credentials=credentials,
+            verify_ssl_certs=False,
+            scope="GIGACHAT_API_PERS"
+        ) as client:
+            payload = Chat(
+                messages=[
+                    Messages(
+                        role="system",
+                        content="Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты. Отвечай только на русском языке."
+                    ),
+                    Messages(
+                        role="user",
+                        content=f"Вопрос: {question}\n\nТекст из лекций: {raw}"
+                    )
+                ],
+                temperature=0.7,
+                max_tokens=300,
+            )
+            response = client.chat(payload)
+            return response.choices[0].message.content
     except Exception as e:
-        return f"{raw}\n\n⚠️ *Переформулировка через AINative недоступна. Показан исходный фрагмент.*"
+        return f"{raw}\n\n⚠️ *Переформулировка через GigaChat недоступна. Показан исходный фрагмент.*"
 
 # ============================================
 # 4. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
@@ -174,50 +180,47 @@ with st.sidebar:
     st.title("🧠 PROMPTUS")
     st.caption(f"v{APP_VERSION}")
     st.divider()
-    
+
     mode = st.radio(
         "📚 Режимы",
-        ["📖 Поиск по базе", "🧠 Синтез с ИИ (AINative)", "🔍 Проверка базы"],
+        ["📖 Поиск по базе", "🧠 Синтез с ИИ (GigaChat)", "🔍 Проверка базы"],
         index=0
     )
     st.divider()
-    
-    if mode == "🧠 Синтез с ИИ (AINative)":
-        st.subheader("🌐 Настройки AINative")
-        
-        model_name = st.text_input(
-            "Название модели",
-            value="gpt-4o",
-            help="Доступные модели: gpt-4o, gpt-4.1, gpt-5, claude-sonnet-4.5, gemini-2.5-pro и др."
+
+    # Настройки для GigaChat
+    if mode == "🧠 Синтез с ИИ (GigaChat)":
+        st.subheader("🌐 Настройки GigaChat")
+
+        credentials = st.text_input(
+            "API-ключ (Authorization Key)",
+            type="password",
+            help="Вставь Authorization Key из личного кабинета Сбера"
         )
-        
-        st.info("💡 AINative работает без ключей! Просто выбери модель и задавай вопросы.")
-        
+
+        st.info("💡 GigaChat Ultra 3.5 доступен во Freemium-режиме (365 млн токенов/год)")
+
         st.divider()
-    
+
+    # Информация о базе
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
-    
+
     st.divider()
-    
+
     with st.expander("ℹ️ Как работает PROMPTUS"):
         st.markdown("""
         **PROMPTUS** — ментор по промпт-инжинирингу.
-        
+
         **Режимы:**
         - 📖 **Поиск по базе** — точные цитаты из лекций
-        - 🧠 **Синтез с ИИ (AINative)** — переформулировка через AINative (без ключей!)
+        - 🧠 **Синтез с ИИ (GigaChat)** — переформулировка через GigaChat (Сбер)
         - 🔍 **Проверка базы** — просмотр содержимого базы знаний
-        
-        **Как работает AINative:**
-        - 🔓 Бесплатно, без регистрации
-        - 🌐 OpenAI-совместимый API
-        - 🚀 Работает в России без VPN
-        
+
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
-        - 🌐 AINative (бесплатный ИИ-прокси)
+        - 🌐 GigaChat API (Сбер)
         """)
 
 # ============================================
@@ -267,7 +270,7 @@ if mode == "📖 Поиск по базе":
         with st.chat_message("assistant"):
             with st.spinner("🔍 Ищу ответ в лекциях..."):
                 answer = get_answer(user_input)
-                
+
                 response = f"""**📖 Ответ ментора (из лекций):**
 
 {answer}
@@ -279,13 +282,13 @@ if mode == "📖 Поиск по базе":
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
 # ============================================
-# 8. РЕЖИМ: СИНТЕЗ С ИИ (AINative)
+# 8. РЕЖИМ: СИНТЕЗ С ИИ (GigaChat)
 # ============================================
 
-elif mode == "🧠 Синтез с ИИ (AINative)":
-    if "messages_ainative" not in st.session_state:
+elif mode == "🧠 Синтез с ИИ (GigaChat)":
+    if "messages_gigachat" not in st.session_state:
         chunks_count = collection.count() if collection else 0
-        st.session_state.messages_ainative = [
+        st.session_state.messages_gigachat = [
             {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
@@ -294,30 +297,33 @@ elif mode == "🧠 Синтез с ИИ (AINative)":
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
         ]
 
-    for msg in st.session_state.messages_ainative:
+    for msg in st.session_state.messages_gigachat:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
 
     if user_input:
-        st.session_state.messages_ainative.append({"role": "user", "content": user_input})
+        st.session_state.messages_gigachat.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("🔍 Ищу ответ и переформулирую через AINative..."):
-                answer = get_answer_with_ainative(user_input, model_name)
-                
-                response = f"""**📖 Ответ ментора (переформулированный AINative):**
+            if not credentials:
+                st.warning("⚠️ Введите API-ключ в настройках GigaChat.")
+            else:
+                with st.spinner("🔍 Ищу ответ и переформулирую через GigaChat..."):
+                    answer = get_answer_with_gigachat(user_input, credentials)
+
+                    response = f"""**📖 Ответ ментора (переформулированный GigaChat):**
 
 {answer}
 
 ---
 💡 *Источник: материалы курса по промпт-инжинирингу.*
 """
-                st.markdown(response)
-                st.session_state.messages_ainative.append({"role": "assistant", "content": response})
+                    st.markdown(response)
+                    st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
 
 # ============================================
 # 9. РЕЖИМ: ПРОВЕРКА БАЗЫ
@@ -326,16 +332,16 @@ elif mode == "🧠 Синтез с ИИ (AINative)":
 elif mode == "🔍 Проверка базы":
     st.title("🔍 Проверка базы знаний")
     st.caption("Здесь ты можешь посмотреть, что хранится в базе знаний PROMPTUS")
-    
+
     if collection is None:
         st.error("❌ База знаний не загружена.")
         st.stop()
-    
+
     total_chunks = collection.count()
     st.metric("📊 Всего фрагментов в базе", total_chunks)
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         if st.button("🎲 Показать случайный фрагмент"):
             all_data = collection.get()
@@ -344,21 +350,21 @@ elif mode == "🔍 Проверка базы":
                 result = collection.get(ids=[random_id])
                 if result and 'documents' in result:
                     chunk_text = result['documents'][0]
-                    
+
                     st.subheader("📄 Случайный фрагмент:")
                     st.text_area("Содержимое:", chunk_text, height=200, key="random_chunk")
-                    
+
                     word_count = len(chunk_text.split())
                     char_count = len(chunk_text)
                     st.caption(f"Слов: {word_count} | Символов: {char_count}")
-                    
+
                     if char_count < 50:
                         st.warning("⚠️ Фрагмент слишком короткий (менее 50 символов)")
                     if any(char in chunk_text for char in ['�', '■', '□']):
                         st.warning("⚠️ Фрагмент содержит битые символы")
                     if chunk_text.strip().startswith(('1.', '2.', '3.', '4.', '5.')):
                         st.info("ℹ️ Фрагмент похож на оглавление")
-    
+
     with col2:
         if st.button("📊 Показать статистику"):
             all_data = collection.get()
@@ -366,18 +372,18 @@ elif mode == "🔍 Проверка базы":
                 docs = all_data['documents']
                 lengths = [len(doc) for doc in docs]
                 avg_len = sum(lengths) / len(lengths) if lengths else 0
-                
+
                 st.subheader("📊 Статистика")
                 st.metric("📏 Средняя длина", f"{avg_len:.0f} симв.")
                 st.metric("📏 Минимальная", f"{min(lengths) if lengths else 0} симв.")
                 st.metric("📏 Максимальная", f"{max(lengths) if lengths else 0} симв.")
-                
+
                 short_count = sum(1 for l in lengths if l < 50)
                 if short_count > 0:
                     st.warning(f"⚠️ Найдено {short_count} коротких фрагментов (< 50 симв.)")
                 else:
                     st.success("✅ Все фрагменты имеют нормальную длину (> 50 симв.)")
-    
+
     with st.expander("ℹ️ Как создавалась база"):
         st.markdown("""
         **База знаний создана из PDF-файлов:**
@@ -385,7 +391,7 @@ elif mode == "🔍 Проверка базы":
         2. Разбит на фрагменты по 1000 символов
         3. Каждый фрагмент превращён в вектор (эмбеддинг)
         4. Векторы сохранены в Chroma DB
-        
+
         **Что проверять:**
         - Длина фрагментов (должна быть > 50 символов)
         - Наличие мусора (оглавления, номера страниц)
@@ -413,18 +419,14 @@ with st.expander("ℹ️ О проекте", expanded=False):
     1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
     2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
     3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
-    4. **Добавление ИИ** — через AINative (бесплатный API без регистрации)
-
-    **Бесплатные ИИ-решения:**
-    - **AINative** — OpenAI-совместимый API, работает без ключей
-    - **KeylessAI** — публичный прокси (может быть нестабилен)
+    4. **Добавление ИИ** — через GigaChat API (Сбер)
 
     **Технологии:**
     - 🐍 Python 3.10
     - 🎨 Streamlit — интерфейс
     - 🧠 SentenceTransformer — эмбеддинги
     - 🗄️ Chroma DB — векторное хранилище
-    - 🌐 AINative — переформулировка ответов
+    - 🌐 GigaChat API — переформулировка ответов
 
     **Версия:** {APP_VERSION}
 
