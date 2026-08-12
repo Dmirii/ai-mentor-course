@@ -11,7 +11,7 @@ from gigachat.models import Chat, Messages
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -131,15 +131,18 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
 # 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ ЧЕРЕЗ GigaChat
 # ============================================
 
-def get_answer_with_gigachat(question: str, credentials: str) -> str:
+# Твой Authorization Key (зашит в коде)
+GIGACHAT_CREDENTIALS = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OmM2ODQ5ZjM1LTE2ZGUtNDNjNC1iMDAyLTUzNmYyYTRmZDgyNA=="
+
+def get_answer_with_gigachat(question: str) -> str:
     """Переформулирует ответ через GigaChat API (Сбер)"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
-
+    
     try:
         with GigaChat(
-            credentials=credentials,
+            credentials=GIGACHAT_CREDENTIALS,
             verify_ssl_certs=False,
             scope="GIGACHAT_API_PERS"
         ) as client:
@@ -188,18 +191,11 @@ with st.sidebar:
     )
     st.divider()
 
-    # Настройки для GigaChat
+    # Информация о GigaChat
     if mode == "🧠 Синтез с ИИ (GigaChat)":
-        st.subheader("🌐 Настройки GigaChat")
-
-        credentials = st.text_input(
-            "API-ключ (Authorization Key)",
-            type="password",
-            help="Вставь Authorization Key из личного кабинета Сбера"
-        )
-
-        st.info("💡 GigaChat Ultra 3.5 доступен во Freemium-режиме (365 млн токенов/год)")
-
+        st.subheader("🌐 GigaChat")
+        st.info("💡 GigaChat Ultra 3.5 (Freemium — 365 млн токенов/год)")
+        st.caption("🔑 API-ключ уже зашит в код")
         st.divider()
 
     # Информация о базе
@@ -294,6 +290,8 @@ elif mode == "🧠 Синтез с ИИ (GigaChat)":
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
 🎯 Текущий режим: **{mode}**
 
+🔑 API-ключ GigaChat уже зашит в код.
+
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
         ]
 
@@ -309,21 +307,18 @@ elif mode == "🧠 Синтез с ИИ (GigaChat)":
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            if not credentials:
-                st.warning("⚠️ Введите API-ключ в настройках GigaChat.")
-            else:
-                with st.spinner("🔍 Ищу ответ и переформулирую через GigaChat..."):
-                    answer = get_answer_with_gigachat(user_input, credentials)
+            with st.spinner("🔍 Ищу ответ и переформулирую через GigaChat..."):
+                answer = get_answer_with_gigachat(user_input)
 
-                    response = f"""**📖 Ответ ментора (переформулированный GigaChat):**
+                response = f"""**📖 Ответ ментора (переформулированный GigaChat):**
 
 {answer}
 
 ---
 💡 *Источник: материалы курса по промпт-инжинирингу.*
 """
-                    st.markdown(response)
-                    st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
+                st.markdown(response)
+                st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
 
 # ============================================
 # 9. РЕЖИМ: ПРОВЕРКА БАЗЫ
