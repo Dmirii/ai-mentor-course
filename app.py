@@ -80,7 +80,7 @@ model, collection, db_exists = load_models()
 # ============================================
 st.set_page_config(page_title="PROMPTUS — Ментор по промптам", layout="wide")
 
-# Боковое меню
+# Боковое меню (компактное)
 with st.sidebar:
     st.title("🧠 PROMPTUS")
     st.caption("Ментор по промпт-инжинирингу")
@@ -90,18 +90,16 @@ with st.sidebar:
     level = st.selectbox(
         "🎯 Уровень",
         ["Новичок", "Средний", "Продвинутый"],
-        index=0,
-        help="Новичок — простые объяснения, Средний — термины, Продвинутый — экспертный уровень"
+        index=0
     )
     
     st.divider()
     
-    # Выбор режима
+    # Выбор режима (компактный список)
     mode = st.radio(
         "📚 Режимы",
-        ["Обучение (Чат)", "Тестирование", "Практика", "Оптимизация", "Безопасность"],
-        index=0,
-        help="Выбери режим работы с PROMPTUS"
+        ["Обучение (Чат)", "Тестирование", "Практика", "Оптимизация", "Безопасность", "Генератор заданий"],
+        index=0
     )
     
     st.divider()
@@ -112,8 +110,7 @@ with st.sidebar:
         min_value=0.1,
         max_value=0.9,
         value=0.3,
-        step=0.1,
-        help="0.1 — строгие ответы, 0.9 — креативные"
+        step=0.1
     )
     
     st.divider()
@@ -184,7 +181,6 @@ if mode == "Обучение (Чат)":
         
         with st.chat_message("assistant"):
             with st.spinner("Ищу в лекциях..."):
-                # Поиск в базе
                 question_vector = model.encode([user_input]).tolist()
                 results = collection.query(
                     query_embeddings=question_vector,
@@ -194,7 +190,6 @@ if mode == "Обучение (Чат)":
                 if results and results['documents'] and results['documents'][0]:
                     context = "\n\n".join(results['documents'][0])
                     
-                    # Формируем ответ с учетом уровня
                     level_style = level_prompts[level]["style"]
                     response = f"""
 **📖 Ответ ментора ({level} уровень):**
@@ -209,9 +204,8 @@ if mode == "Обучение (Чат)":
                     
                     st.markdown(response)
                     
-                    # Озвучка
                     if tts_enabled:
-                        clean_text = context[:500]  # Ограничиваем длину
+                        clean_text = context[:500]
                         st.components.v1.html(f"""
                         <script>
                         (function() {{
@@ -253,7 +247,6 @@ elif mode == "Тестирование":
             if len(student_answer.split()) < 10:
                 st.warning("❌ Ответ слишком короткий. Попробуй развернуто.")
             else:
-                # Простая проверка через эмбеддинги
                 ans_vector = model.encode([student_answer]).tolist()
                 similar = collection.query(
                     query_embeddings=ans_vector,
@@ -267,17 +260,22 @@ elif mode == "Тестирование":
                     st.markdown(f"**Оригинал:** {st.session_state['current_question'][:500]}...")
 
 # ============================================
-# РЕЖИМ 3: ПРАКТИКА
+# РЕЖИМ 3: ПРАКТИКА (ВСЕ ЗАДАНИЯ ИЗ PDF)
 # ============================================
 elif mode == "Практика":
-    st.title("🎯 Практические задания")
+    st.title("📖 Практика по материалам курса")
     st.caption(f"Уровень: {level}")
     
-    # Задания из PDF (1.2 СР, 1.3 СР, 1.4 Практика, 1.5 Практика)
+    # Полный список заданий из всех PDF
     tasks = [
         {
+            "name": "Анализ промпта",
+            "description": "Прочитай промпт 'Напиши текст про еду' и найди в нём недочёты. Предложи улучшенную версию.",
+            "source": "1.1.2СР.pdf"
+        },
+        {
             "name": "Zero-shot промпт",
-            "description": "Сформулируй запрос без примеров. Например: 'Объясни, что такое нейросеть простыми словами'",
+            "description": "Сформулируй запрос без примеров. Например: 'Объясни, что такое квантовый компьютер простыми словами'",
             "source": "1.2 СР.pdf"
         },
         {
@@ -292,21 +290,46 @@ elif mode == "Практика":
         },
         {
             "name": "Оптимизация промпта",
-            "description": "Возьми плохой промпт и улучши его по принципам из лекции",
+            "description": "Возьми плохой промпт и улучши его по принципам из лекции (1.5.1)",
             "source": "1.5 Практика.pdf"
         },
         {
-            "name": "Анализ безопасности",
-            "description": "Напиши безопасный промпт для финансового советника",
+            "name": "Безопасность промпта",
+            "description": "Напиши безопасный промпт для финансового советника (избегай угроз из 1.5.2)",
             "source": "1.5.2 Безопасность prompts.pdf"
+        },
+        {
+            "name": "Генерация изображения",
+            "description": "Создай промпт для генерации изображения: 'Парень и девушка за столом обедают курицей гриль'",
+            "source": "1.4 Практическая работа..pdf"
+        },
+        {
+            "name": "Анализ изображения",
+            "description": "Сгенерируй изображение по промпту и проанализируй результат",
+            "source": "1.4 Самостоятельная работа.pdf"
+        },
+        {
+            "name": "Chain-of-Thought",
+            "description": "Реши задачу, показывая все шаги: 'Сколько будет 25% от 80?'",
+            "source": "1.2.1.pdf"
+        },
+        {
+            "name": "Meta Prompting",
+            "description": "Сначала составь план статьи о влиянии технологий, затем напиши текст по плану",
+            "source": "1.2.1.pdf"
+        },
+        {
+            "name": "Role Prompting",
+            "description": "Составь промпт от имени эксперта (например, юриста) для конкретной аудитории",
+            "source": "1.2.1.pdf"
         }
     ]
     
     # Фильтруем задания по уровню
     if level == "Новичок":
-        tasks = tasks[:3]  # Zero, One, Few-shot
+        tasks = tasks[:4]  # Анализ, Zero, One, Few-shot
     elif level == "Средний":
-        tasks = tasks[:4]  # + Оптимизация
+        tasks = tasks[:8]  # + Оптимизация, Безопасность, Генерация, Анализ изображений
     else:
         tasks = tasks  # Все задания
     
@@ -344,7 +367,6 @@ elif mode == "Оптимизация":
     if st.button("🔍 Оптимизировать"):
         if raw_prompt:
             with st.spinner("Анализирую..."):
-                # Ищем в базе примеры хороших промптов
                 vector = model.encode([raw_prompt]).tolist()
                 results = collection.query(
                     query_embeddings=vector,
@@ -386,7 +408,7 @@ elif mode == "Оптимизация":
 # ============================================
 # РЕЖИМ 5: БЕЗОПАСНОСТЬ
 # ============================================
-else:  # Безопасность
+elif mode == "Безопасность":
     st.title("🛡️ Безопасность промптов")
     st.caption(f"Уровень: {level}")
     
@@ -402,7 +424,6 @@ else:  # Безопасность
     
     if st.button("🛡️ Проверить"):
         if security_prompt:
-            # Проверка на ключевые слова угроз (из PDF 1.5.2)
             threats = {
                 "игнорируй инструкции": "⚠️ Попытка игнорирования системных инструкций",
                 "забудь предыдущие указания": "⚠️ Попытка сброса контекста (Jailbreak)",
@@ -442,3 +463,178 @@ else:  # Безопасность
             """)
         else:
             st.warning("Введи промпт для проверки безопасности")
+
+# ============================================
+# РЕЖИМ 6: ГЕНЕРАТОР ЗАДАНИЙ
+# ============================================
+else:  # Генератор заданий
+    st.title("🎯 Генератор заданий")
+    st.caption(f"Уровень: {level} | Задания генерируются случайно из материалов курса")
+    
+    # Кнопка для генерации нового задания
+    if st.button("🔄 Сгенерировать новое задание"):
+        all_data = collection.get()
+        if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
+            random_id = random.choice(all_data['ids'])
+            result = collection.get(ids=[random_id])
+            if result and 'documents' in result:
+                chunk_text = result['documents'][0]
+                
+                # Определяем тип задания
+                task_type = "Определение"
+                if any(word in chunk_text.lower() for word in ["ошибк", "недочёт", "плох"]):
+                    task_type = "Анализ"
+                elif any(word in chunk_text.lower() for word in ["создай", "напиши", "составь"]):
+                    task_type = "Создание"
+                elif any(word in chunk_text.lower() for word in ["оптимизац", "улучш", "структур"]):
+                    task_type = "Оптимизация"
+                elif any(word in chunk_text.lower() for word in ["безопасн", "угроз", "защит"]):
+                    task_type = "Безопасность"
+                
+                # Формируем задание в зависимости от типа и уровня
+                task_prompts = {
+                    "Новичок": {
+                        "Анализ": f"📌 **Задание (Анализ)**\n\nПроанализируй этот фрагмент из лекции и найди в нём 2 ключевые мысли:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Выдели 2 главные идеи\n- Объясни их простыми словами\n- Ответ не более 100 слов",
+                        "Создание": f"📌 **Задание (Создание)**\n\nНа основе этого фрагмента создай **Zero-shot промпт** для начинающих:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Четкая инструкция\n- Укажи целевую аудиторию\n- Ответ не более 3 предложений",
+                        "Оптимизация": f"📌 **Задание (Оптимизация)**\n\nУлучши этот фрагмент, сделав его более структурированным:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Разбей на 2-3 логические части\n- Добавь подзаголовки\n- Сохрани смысл",
+                        "Безопасность": f"📌 **Задание (Безопасность)**\n\nНайди потенциальные угрозы в этом фрагменте:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Определи 2 возможные уязвимости\n- Предложи способ их устранения"
+                    },
+                    "Средний": {
+                        "Анализ": f"📌 **Задание (Анализ)**\n\nПроведи анализ этого фрагмента с профессиональной точки зрения:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Оцени точность информации\n- Предложи улучшения\n- Ответ не более 150 слов",
+                        "Создание": f"📌 **Задание (Создание)**\n\nСоздай **Few-shot промпт** с 2-3 примерами на основе этого фрагмента:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Примеры должны иллюстрировать разные аспекты\n- Укажи контекст использования",
+                        "Оптимизация": f"📌 **Задание (Оптимизация)**\n\nПримени принципы оптимизации к этому фрагменту:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Используй Chain-of-Thought\n- Добавь формат вывода (список/таблица)",
+                        "Безопасность": f"📌 **Задание (Безопасность)**\n\nПроанализируй этот фрагмент на наличие скрытых угроз (injection, jailbreak):\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Выяви 3 потенциальные атаки\n- Опиши защитные меры"
+                    },
+                    "Продвинутый": {
+                        "Анализ": f"📌 **Задание (Анализ)**\n\nПроведи критический анализ фрагмента с позиции исследователя:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Оцени актуальность информации\n- Предложи альтернативные подходы\n- Ответ не более 200 слов",
+                        "Создание": f"📌 **Задание (Создание)**\n\nРазработай **мета-промпт** для генерации цепочки заданий на основе этого фрагмента:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Включи структуру из 3 шагов\n- Укажи критерии качества",
+                        "Оптимизация": f"📌 **Задание (Оптимизация)**\n\nПримени продвинутые техники оптимизации к этому фрагменту:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Используй самосогласованность\n- Добавь A/B тестирование",
+                        "Безопасность": f"📌 **Задание (Безопасность)**\n\nРазработай систему защиты от всех видов атак для этого фрагмента:\n\n> {chunk_text[:500]}...\n\n**Требования:**\n- Многоуровневая фильтрация\n- Механизмы обнаружения угроз"
+                    }
+                }
+                
+                st.session_state['current_task'] = task_prompts[level][task_type]
+                st.session_state['task_type'] = task_type
+                st.session_state['task_source'] = chunk_text[:1000]
+                st.session_state['task_generated'] = True
+                st.session_state['task_checked'] = False
+                
+                st.rerun()
+    
+    # Отображаем текущее задание
+    if st.session_state.get('task_generated', False):
+        st.markdown(st.session_state['current_task'])
+        
+        student_answer = st.text_area("✍️ Твой ответ:", height=150, key="task_answer")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Проверить ответ") and not st.session_state.get('task_checked', False):
+                score = 0
+                feedback = []
+                
+                if st.session_state['task_type'] == "Анализ":
+                    if len(student_answer.split()) > 30:
+                        score += 3
+                        feedback.append("✅ Достаточный объем")
+                    else:
+                        feedback.append("❌ Объем ответа маловат")
+                    
+                    if any(word in student_answer.lower() for word in ["ключ", "главн", "основн"]):
+                        score += 4
+                        feedback.append("✅ Выделены ключевые идеи")
+                    else:
+                        feedback.append("❌ Попробуй выделить главные мысли")
+                    
+                    if any(word in student_answer.lower() for word in ["прост", "понятн", "ясн"]):
+                        score += 3
+                        feedback.append("✅ Объяснение доступное")
+                    else:
+                        feedback.append("❌ Слишком сложный язык")
+                
+                elif st.session_state['task_type'] == "Создание":
+                    if len(student_answer.split()) > 10:
+                        score += 3
+                        feedback.append("✅ Достаточный объем")
+                    
+                    if "пример" in student_answer.lower():
+                        score += 4
+                        feedback.append("✅ Есть пример")
+                    else:
+                        feedback.append("❌ Добавь пример")
+                    
+                    if any(word in student_answer.lower() for word in ["инструкц", "задач", "сделай"]):
+                        score += 3
+                        feedback.append("✅ Есть четкая инструкция")
+                    else:
+                        feedback.append("❌ Добавь инструкцию")
+                
+                elif st.session_state['task_type'] == "Оптимизация":
+                    if len(student_answer.split()) > 20:
+                        score += 3
+                    
+                    if any(word in student_answer.lower() for word in ["часть", "раздел", "пункт"]):
+                        score += 4
+                        feedback.append("✅ Структура улучшена")
+                    
+                    if any(word in student_answer.lower() for word in ["подзаголовк", "список", "таблиц"]):
+                        score += 3
+                        feedback.append("✅ Добавлены элементы форматирования")
+                
+                elif st.session_state['task_type'] == "Безопасность":
+                    if any(word in student_answer.lower() for word in ["инъекц", "инжекц", "взлом"]):
+                        score += 4
+                        feedback.append("✅ Обнаружены угрозы")
+                    
+                    if any(word in student_answer.lower() for word in ["фильтрац", "защит", "проверк"]):
+                        score += 4
+                        feedback.append("✅ Предложены меры защиты")
+                    
+                    if len(student_answer.split()) > 15:
+                        score += 2
+                        feedback.append("✅ Достаточный анализ")
+                
+                else:
+                    if len(student_answer.split()) > 20:
+                        score += 4
+                        feedback.append("✅ Полное определение")
+                    
+                    if any(word in student_answer.lower() for word in ["пример", "использован", "ситуац"]):
+                        score += 4
+                        feedback.append("✅ Есть пример использования")
+                    
+                    if len(student_answer.split()) < 10:
+                        feedback.append("❌ Ответ слишком короткий")
+                
+                total_score = min(score, 10)
+                st.session_state['task_checked'] = True
+                st.session_state['task_score'] = total_score
+                st.session_state['task_feedback'] = feedback
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Сбросить и начать заново"):
+                st.session_state['task_generated'] = False
+                st.session_state['task_checked'] = False
+                st.rerun()
+        
+        if st.session_state.get('task_checked', False):
+            st.divider()
+            score = st.session_state.get('task_score', 0)
+            
+            if score >= 8:
+                st.success(f"🌟 Отлично! Оценка: {score}/10")
+            elif score >= 5:
+                st.info(f"👍 Хорошо! Оценка: {score}/10")
+            else:
+                st.warning(f"📖 Попробуй еще раз. Оценка: {score}/10")
+            
+            st.subheader("📝 Детальная обратная связь:")
+            for item in st.session_state.get('task_feedback', []):
+                st.write(item)
+            
+            st.caption("💡 Подсказка: Сравни свой ответ с фрагментом из лекции:")
+            st.write(st.session_state.get('task_source', '')[:500] + "...")
+    
+    else:
+        st.info("👆 Нажми кнопку 'Сгенерировать новое задание', чтобы начать практику.")
