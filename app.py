@@ -5,12 +5,12 @@ from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
-import openai
+import ainative_openai as openai  # <-- замена openai
 
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.3.2"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -127,45 +127,34 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     return clean_text
 
 # ============================================
-# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ (НЕ РАБОТАЕТ БЕЗ КЛЮЧЕЙ)
+# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ С AINATIVE
 # ============================================
 
-def get_answer_with_llm(question: str, api_base: str, model_name: str = "gpt-4o") -> str:
-    """Переформулирует ответ через указанный API-эндпоинт"""
+def get_answer_with_ainative(question: str, model_name: str = "gpt-4o") -> str:
+    """Переформулирует ответ через AINative (без ключа)"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
     
-    # Пробуем разные эндпоинты
-    endpoints_to_try = [
-        api_base,
-        "https://api.keyless.ai/v1",
-        "https://keylessai.thryx.workers.dev/v1",
-        "https://keyless-ai.pages.dev/v1",
-        "https://duck.ai/api"
-    ]
-    
-    for endpoint in endpoints_to_try:
-        try:
-            client = openai.OpenAI(
-                base_url=endpoint,
-                api_key="dummy"
-            )
-            
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
-                    {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
-                ],
-                temperature=0.3,
-                max_tokens=300
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            continue
-    
-    return f"{raw}\n\n⚠️ *Переформулировка временно недоступна. Показан исходный фрагмент.*"
+    try:
+        # Используем AINative как OpenAI-совместимый клиент
+        client = openai.OpenAI(
+            base_url="https://api.ainative.studio/api/v1",
+            api_key="dummy"  # AINative не требует ключа
+        )
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
+                {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
+            ],
+            temperature=0.3,
+            max_tokens=300
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"{raw}\n\n⚠️ *Переформулировка через AINative недоступна. Показан исходный фрагмент.*"
 
 # ============================================
 # 4. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
@@ -186,50 +175,26 @@ with st.sidebar:
     st.caption(f"v{APP_VERSION}")
     st.divider()
     
-    # Выбор режима
     mode = st.radio(
         "📚 Режимы",
-        ["📖 Поиск по базе", "🧠 Синтез с ИИ", "🔍 Проверка базы"],
+        ["📖 Поиск по базе", "🧠 Синтез с ИИ (AINative)", "🔍 Проверка базы"],
         index=0
     )
     st.divider()
     
-    # НАСТРОЙКА ЭНДПОИНТА — только если выбран режим Синтез
-    if mode == "🧠 Синтез с ИИ":
-        st.subheader("🌐 Настройки ИИ")
-        
-        preset_endpoints = {
-            "KeylessAI (прокси)": "https://api.keyless.ai/v1",
-            "KeylessAI (альтернативный)": "https://keylessai.thryx.workers.dev/v1",
-            "KeylessAI (pages)": "https://keyless-ai.pages.dev/v1",
-            "Duck.ai": "https://duck.ai/api",
-            "Другой": "custom"
-        }
-        
-        selected_preset = st.selectbox(
-            "Выбери эндпоинт",
-            list(preset_endpoints.keys()),
-            index=0
-        )
-        
-        if preset_endpoints[selected_preset] == "custom":
-            api_base = st.text_input(
-                "Введи свой эндпоинт",
-                placeholder="https://api.example.com/v1"
-            )
-        else:
-            api_base = preset_endpoints[selected_preset]
-            st.caption(f"📌 {api_base}")
+    if mode == "🧠 Синтез с ИИ (AINative)":
+        st.subheader("🌐 Настройки AINative")
         
         model_name = st.text_input(
             "Название модели",
             value="gpt-4o",
-            help="Используй названия, которые поддерживает выбранный эндпоинт"
+            help="Доступные модели: gpt-4o, gpt-4.1, gpt-5, claude-sonnet-4.5, gemini-2.5-pro и др."
         )
+        
+        st.info("💡 AINative работает без ключей! Просто выбери модель и задавай вопросы.")
         
         st.divider()
     
-    # Информация о базе
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
     
@@ -241,12 +206,18 @@ with st.sidebar:
         
         **Режимы:**
         - 📖 **Поиск по базе** — точные цитаты из лекций
-        - 🧠 **Синтез с ИИ** — переформулировка через внешний API
+        - 🧠 **Синтез с ИИ (AINative)** — переформулировка через AINative (без ключей!)
         - 🔍 **Проверка базы** — просмотр содержимого базы знаний
+        
+        **Как работает AINative:**
+        - 🔓 Бесплатно, без регистрации
+        - 🌐 OpenAI-совместимый API
+        - 🚀 Работает в России без VPN
         
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
+        - 🌐 AINative (бесплатный ИИ-прокси)
         """)
 
 # ============================================
@@ -271,7 +242,6 @@ st.divider()
 # ============================================
 
 if mode == "📖 Поиск по базе":
-    # Инициализация истории диалога
     if "messages" not in st.session_state:
         chunks_count = collection.count() if collection else 0
         st.session_state.messages = [
@@ -309,14 +279,13 @@ if mode == "📖 Поиск по базе":
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
 # ============================================
-# 8. РЕЖИМ: СИНТЕЗ С ИИ
+# 8. РЕЖИМ: СИНТЕЗ С ИИ (AINative)
 # ============================================
 
-elif mode == "🧠 Синтез с ИИ":
-    # Инициализация истории диалога
-    if "messages_llm" not in st.session_state:
+elif mode == "🧠 Синтез с ИИ (AINative)":
+    if "messages_ainative" not in st.session_state:
         chunks_count = collection.count() if collection else 0
-        st.session_state.messages_llm = [
+        st.session_state.messages_ainative = [
             {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
@@ -325,22 +294,22 @@ elif mode == "🧠 Синтез с ИИ":
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
         ]
 
-    for msg in st.session_state.messages_llm:
+    for msg in st.session_state.messages_ainative:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
 
     if user_input:
-        st.session_state.messages_llm.append({"role": "user", "content": user_input})
+        st.session_state.messages_ainative.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("🔍 Ищу ответ и переформулирую..."):
-                answer = get_answer_with_llm(user_input, api_base, model_name)
+            with st.spinner("🔍 Ищу ответ и переформулирую через AINative..."):
+                answer = get_answer_with_ainative(user_input, model_name)
                 
-                response = f"""**📖 Ответ ментора (переформулированный ИИ):**
+                response = f"""**📖 Ответ ментора (переформулированный AINative):**
 
 {answer}
 
@@ -348,7 +317,7 @@ elif mode == "🧠 Синтез с ИИ":
 💡 *Источник: материалы курса по промпт-инжинирингу.*
 """
                 st.markdown(response)
-                st.session_state.messages_llm.append({"role": "assistant", "content": response})
+                st.session_state.messages_ainative.append({"role": "assistant", "content": response})
 
 # ============================================
 # 9. РЕЖИМ: ПРОВЕРКА БАЗЫ
@@ -362,14 +331,12 @@ elif mode == "🔍 Проверка базы":
         st.error("❌ База знаний не загружена.")
         st.stop()
     
-    # Общая информация
     total_chunks = collection.count()
     st.metric("📊 Всего фрагментов в базе", total_chunks)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        # Кнопка для просмотра случайного фрагмента
         if st.button("🎲 Показать случайный фрагмент"):
             all_data = collection.get()
             if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
@@ -381,12 +348,10 @@ elif mode == "🔍 Проверка базы":
                     st.subheader("📄 Случайный фрагмент:")
                     st.text_area("Содержимое:", chunk_text, height=200, key="random_chunk")
                     
-                    # Анализ фрагмента
                     word_count = len(chunk_text.split())
                     char_count = len(chunk_text)
                     st.caption(f"Слов: {word_count} | Символов: {char_count}")
                     
-                    # Проверка на мусор
                     if char_count < 50:
                         st.warning("⚠️ Фрагмент слишком короткий (менее 50 символов)")
                     if any(char in chunk_text for char in ['�', '■', '□']):
@@ -395,7 +360,6 @@ elif mode == "🔍 Проверка базы":
                         st.info("ℹ️ Фрагмент похож на оглавление")
     
     with col2:
-        # Кнопка для показа статистики
         if st.button("📊 Показать статистику"):
             all_data = collection.get()
             if all_data and 'documents' in all_data:
@@ -414,7 +378,6 @@ elif mode == "🔍 Проверка базы":
                 else:
                     st.success("✅ Все фрагменты имеют нормальную длину (> 50 симв.)")
     
-    # Информация о создании базы
     with st.expander("ℹ️ Как создавалась база"):
         st.markdown("""
         **База знаний создана из PDF-файлов:**
@@ -450,14 +413,18 @@ with st.expander("ℹ️ О проекте", expanded=False):
     1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
     2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
     3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
-    4. **Добавление ИИ** — через настраиваемый эндпоинт (KeylessAI, Duck.ai и др.)
+    4. **Добавление ИИ** — через AINative (бесплатный API без регистрации)
+
+    **Бесплатные ИИ-решения:**
+    - **AINative** — OpenAI-совместимый API, работает без ключей
+    - **KeylessAI** — публичный прокси (может быть нестабилен)
 
     **Технологии:**
     - 🐍 Python 3.10
     - 🎨 Streamlit — интерфейс
     - 🧠 SentenceTransformer — эмбеддинги
     - 🗄️ Chroma DB — векторное хранилище
-    - 🌐 OpenAI-совместимый API для переформулировки
+    - 🌐 AINative — переформулировка ответов
 
     **Версия:** {APP_VERSION}
 
