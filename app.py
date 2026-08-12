@@ -5,11 +5,18 @@ from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
+import openai
 
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
+
+# ============================================
+# НАСТРОЙКА KEYLESSAI
+# ============================================
+openai.api_base = "https://keylessai.thryx.workers.dev/v1"
+openai.api_key = "not-needed"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -80,15 +87,12 @@ def create_db_from_pdf(model):
 model, collection, db_exists = load_models()
 
 # ============================================
-# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА
+# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА (С СИНТЕЗОМ)
 # ============================================
 
-def get_answer(question: str, max_chunks: int = 3) -> str:
-    """
-    Ищет ответ в базе и возвращает связный текст.
-    """
+def get_answer(question: str, max_chunks: int = 5) -> str:
     if collection is None:
-        return "❌ База знаний не загружена. Проверьте папку data/."
+        return "❌ База знаний не загружена."
 
     question_vector = model.encode([question]).tolist()
     results = collection.query(
@@ -97,22 +101,56 @@ def get_answer(question: str, max_chunks: int = 3) -> str:
     )
 
     if not results or not results['documents'] or not results['documents'][0]:
-        return "❌ В материалах курса не нашлось ответа на ваш вопрос."
+        return "❌ В материалах курса не нашлось ответа."
 
-    all_text = " ".join(results['documents'][0])
+    clean_chunks = []
+    for doc in results['documents'][0]:
+        doc = doc.strip()
+        if len(doc) < 100:
+            continue
+        if doc.startswith(('1.', '2.', '3.', '4.', '5.')) and '......' in doc:
+            continue
+        if 'Оглавление' in doc or 'Table of Contents' in doc:
+            continue
+        clean_chunks.append(doc)
+
+    if clean_chunks:
+        all_text = " ".join(clean_chunks)
+    else:
+        all_text = " ".join(results['documents'][0])
+
     clean_text = ' '.join(all_text.split())
     clean_text = clean_text.replace('�', '').replace('  ', ' ')
 
     if len(clean_text) < 50:
-        return "❌ Найден только короткий фрагмент. Попробуйте переформулировать вопрос."
+        return "❌ Найден только короткий фрагмент."
 
     if len(clean_text) > 800:
         clean_text = clean_text[:800] + "..."
 
     return clean_text
 
+def get_answer_with_llm(question: str) -> str:
+    raw = get_answer(question)
+    if raw.startswith("❌"):
+        return raw
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
+                {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"{raw}\n\n⚠️ *Переформулировка временно недоступна. Показан исходный фрагмент.*"
+
 # ============================================
-# 3. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
+# 3. ИНТЕРФЕЙС
 # ============================================
 
 st.set_page_config(
@@ -121,9 +159,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# ============================================
-# 4. ШАПКА С ВЕРСИЕЙ
-# ============================================
+with st.sidebar:
+    st.title("🧠 PROMPTUS")
+    st.caption(f"v{APP_VERSION}")
+    st.divider()
+
+    mode = st.radio(
+        "📚 Режим",
+        ["📖 Поиск по базе", "🧠 Синтез с ИИ"],
+        index=0
+    )
+    st.divider()
+
+    chunks_count = collection.count() if collection else 0
+    st.caption(f"📊 В базе: {chunks_count} фрагментов")
+
+    st.divider()
+
+    with st.expander("ℹ️ Как работает PROMPTUS"):
+        st.markdown("""
+        **PROMPTUS** — ментор по промпт-инжинирингу.
+
+        **Режимы:**
+        - 📖 **Поиск по базе** — точные цитаты из лекций
+        - 🧠 **Синтез с ИИ** — переформулированный ответ через KeylessAI
+
+        **Технологии:**
+        - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
+        - 🗄️ Chroma DB
+        - 🌐 KeylessAI (бесплатный ИИ без регистрации)
+        """)
 
 col1, col2, col3 = st.columns([1, 5, 1])
 with col1:
@@ -138,11 +203,6 @@ with col3:
 
 st.divider()
 
-# ============================================
-# 5. ЧАТ-ИНТЕРФЕЙС
-# ============================================
-
-# Инициализация истории диалога
 if "messages" not in st.session_state:
     chunks_count = collection.count() if collection else 0
     st.session_state.messages = [
@@ -153,12 +213,10 @@ if "messages" not in st.session_state:
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
     ]
 
-# Отображение истории сообщений
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Ввод вопроса пользователя
 user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
 
 if user_input:
@@ -167,65 +225,49 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner("🔍 Ищу ответ в лекциях..."):
-            answer = get_answer(user_input)
-            
-            response = f"""**📖 Ответ ментора:**
+        with st.spinner("🔍 Ищу ответ..."):
+            if mode == "🧠 Синтез с ИИ":
+                answer = get_answer_with_llm(user_input)
+                label = "переформулированный ИИ"
+            else:
+                answer = get_answer(user_input)
+                label = "из лекций"
+
+            response = f"""**📖 Ответ ментора ({label}):**
 
 {answer}
 
 ---
-💡 *На основе материалов курса по промпт-инжинирингу.*
+💡 *Источник: материалы курса по промпт-инжинирингу.*
 """
             st.markdown(response)
             st.session_state.messages.append({"role": "assistant", "content": response})
 
-# ============================================
-# 6. ФУТЕР — ИНФОРМАЦИЯ О ПРОЕКТЕ
-# ============================================
-
 st.divider()
 
 col1, col2, col3 = st.columns([2, 1, 2])
-
 with col2:
     st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
-
 with col1:
     st.caption("📚 Материалы: PDF-лекции по промпт-инжинирингу")
-
 with col3:
     st.caption("🔗 [Исходный код на GitHub](https://github.com/Dmirii/ai-mentor-course)")
 
-# Выпадающий блок с деталями проекта
 with st.expander("ℹ️ О проекте", expanded=False):
     st.markdown(f"""
     **Как создавался PROMPTUS**
 
-    1. **Сбор материалов** — PDF-лекции по курсу промпт-инжиниринга загружены в папку `data/`
-    2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы (Chroma DB)
-    3. **Разработка агента** — на базе Streamlit создан чат-интерфейс с поиском по базе
-    4. **Хостинг** — приложение запущено на платформе Streamlit Cloud
+    1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
+    2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
+    3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
+    4. **Добавление ИИ** — через KeylessAI (бесплатный API без регистрации)
 
     **Технологии:**
     - 🐍 Python 3.10
     - 🎨 Streamlit — интерфейс
-    - 🧠 SentenceTransformer — модель `all-MiniLM-L6-v2` для эмбеддингов (поиска по смыслу)
+    - 🧠 SentenceTransformer — эмбеддинги
     - 🗄️ Chroma DB — векторное хранилище
-
-    **Как работает PROMPTUS:**
-    PROMPTUS — это система **RAG (Retrieval-Augmented Generation) без генерации**.
-    
-    1. Твой вопрос превращается в вектор чисел с помощью модели `all-MiniLM-L6-v2`
-    2. База Chroma DB ищет самые похожие фрагменты из лекций
-    3. Найденные фрагменты форматируются и показываются в виде ответа
-
-    **Почему такая архитектура:**
-    - ✅ Быстро (ответ за 0.5-1 секунду)
-    - ✅ Бесплатно (не требует OpenAI или других платных API)
-    - ✅ Работает в рамках 1 ГБ памяти Streamlit Cloud
-    - ✅ Точные цитаты из лекций (без галлюцинаций)
-    - ✅ Может обслуживать несколько учеников одновременно
+    - 🌐 KeylessAI — переформулировка ответов
 
     **Версия:** {APP_VERSION}
 
