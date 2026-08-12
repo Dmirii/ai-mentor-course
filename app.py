@@ -10,13 +10,7 @@ import openai
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.2.0"
-
-# ============================================
-# НАСТРОЙКА KEYLESSAI
-# ============================================
-openai.api_base = "https://keylessai.thryx.workers.dev/v1"
-openai.api_key = "not-needed"
+APP_VERSION = "1.3.0"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -87,12 +81,13 @@ def create_db_from_pdf(model):
 model, collection, db_exists = load_models()
 
 # ============================================
-# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА (С СИНТЕЗОМ)
+# 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА
 # ============================================
 
 def get_answer(question: str, max_chunks: int = 5) -> str:
+    """Ищет ответ в базе и возвращает связный текст без переформулировки"""
     if collection is None:
-        return "❌ База знаний не загружена."
+        return "❌ База знаний не загружена. Проверьте папку data/."
 
     question_vector = model.encode([question]).tolist()
     results = collection.query(
@@ -101,8 +96,9 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     )
 
     if not results or not results['documents'] or not results['documents'][0]:
-        return "❌ В материалах курса не нашлось ответа."
+        return "❌ В материалах курса не нашлось ответа на ваш вопрос."
 
+    # Очистка от мусора
     clean_chunks = []
     for doc in results['documents'][0]:
         doc = doc.strip()
@@ -123,34 +119,59 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     clean_text = clean_text.replace('�', '').replace('  ', ' ')
 
     if len(clean_text) < 50:
-        return "❌ Найден только короткий фрагмент."
+        return "❌ Найден только короткий фрагмент. Попробуйте переформулировать вопрос."
 
     if len(clean_text) > 800:
         clean_text = clean_text[:800] + "..."
 
     return clean_text
 
-def get_answer_with_llm(question: str) -> str:
+# ============================================
+# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ С ВОЗМОЖНОСТЬЮ ВЫБОРА ЭНДПОИНТА
+# ============================================
+
+def get_answer_with_llm(question: str, api_base: str, model_name: str = "gpt-4o") -> str:
+    """
+    Переформулирует ответ через указанный API-эндпоинт
+    """
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
-                {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
-            ],
-            temperature=0.3,
-            max_tokens=500
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        return f"{raw}\n\n⚠️ *Переформулировка временно недоступна. Показан исходный фрагмент.*"
+    
+    # Пробуем разные эндпоинты, если первый не работает
+    endpoints_to_try = [
+        api_base,
+        "https://api.keyless.ai/v1",
+        "https://keylessai.thryx.workers.dev/v1",
+        "https://keyless-ai.pages.dev/v1",
+        "https://duck.ai/api"
+    ]
+    
+    for endpoint in endpoints_to_try:
+        try:
+            # Настраиваем клиент
+            client = openai.OpenAI(
+                base_url=endpoint,
+                api_key="dummy"  # KeylessAI не требует ключа
+            )
+            
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты."},
+                    {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
+                ],
+                temperature=0.3,
+                max_tokens=300
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            continue
+    
+    return f"{raw}\n\n⚠️ *Переформулировка временно недоступна. Показан исходный фрагмент.*"
 
 # ============================================
-# 3. ИНТЕРФЕЙС
+# 4. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
 # ============================================
 
 st.set_page_config(
@@ -159,36 +180,89 @@ st.set_page_config(
     layout="wide"
 )
 
+# ============================================
+# 5. БОКОВОЕ МЕНЮ
+# ============================================
+
 with st.sidebar:
     st.title("🧠 PROMPTUS")
     st.caption(f"v{APP_VERSION}")
     st.divider()
-
+    
+    # Выбор режима
     mode = st.radio(
         "📚 Режим",
         ["📖 Поиск по базе", "🧠 Синтез с ИИ"],
         index=0
     )
     st.divider()
-
+    
+    # НАСТРОЙКА ЭНДПОИНТА — только если выбран режим Синтез
+    if mode == "🧠 Синтез с ИИ":
+        st.subheader("🌐 Настройки ИИ")
+        
+        # Предустановленные эндпоинты
+        preset_endpoints = {
+            "KeylessAI (прокси)": "https://api.keyless.ai/v1",
+            "KeylessAI (альтернативный)": "https://keylessai.thryx.workers.dev/v1",
+            "KeylessAI (pages)": "https://keyless-ai.pages.dev/v1",
+            "Duck.ai": "https://duck.ai/api",
+            "Другой": "custom"
+        }
+        
+        selected_preset = st.selectbox(
+            "Выбери эндпоинт",
+            list(preset_endpoints.keys()),
+            index=0
+        )
+        
+        if preset_endpoints[selected_preset] == "custom":
+            custom_endpoint = st.text_input(
+                "Введи свой эндпоинт",
+                placeholder="https://api.example.com/v1"
+            )
+            api_base = custom_endpoint
+        else:
+            api_base = preset_endpoints[selected_preset]
+            st.caption(f"📌 {api_base}")
+        
+        # Выбор модели
+        model_name = st.text_input(
+            "Название модели",
+            value="gpt-4o",
+            help="Используй названия, которые поддерживает выбранный эндпоинт"
+        )
+        
+        st.divider()
+    
+    # Информация о базе
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
-
+    
     st.divider()
-
+    
     with st.expander("ℹ️ Как работает PROMPTUS"):
         st.markdown("""
         **PROMPTUS** — ментор по промпт-инжинирингу.
-
+        
         **Режимы:**
         - 📖 **Поиск по базе** — точные цитаты из лекций
-        - 🧠 **Синтез с ИИ** — переформулированный ответ через KeylessAI
-
+        - 🧠 **Синтез с ИИ** — переформулированный ответ через выбранный эндпоинт
+        
+        **Как работает ИИ-синтез:**
+        1. PROMPTUS находит фрагменты в лекциях
+        2. Отправляет их на выбранный эндпоинт
+        3. Получает переформулированный ответ
+        
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
-        - 🌐 KeylessAI (бесплатный ИИ без регистрации)
+        - 🌐 Поддержка любых OpenAI-совместимых API
         """)
+
+# ============================================
+# 6. ШАПКА
+# ============================================
 
 col1, col2, col3 = st.columns([1, 5, 1])
 with col1:
@@ -203,12 +277,17 @@ with col3:
 
 st.divider()
 
+# ============================================
+# 7. ЧАТ-ИНТЕРФЕЙС
+# ============================================
+
 if "messages" not in st.session_state:
     chunks_count = collection.count() if collection else 0
     st.session_state.messages = [
         {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
+🎯 Текущий режим: **{mode}**
 
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
     ]
@@ -227,7 +306,8 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("🔍 Ищу ответ..."):
             if mode == "🧠 Синтез с ИИ":
-                answer = get_answer_with_llm(user_input)
+                # Используем переформулировку с выбранным эндпоинтом
+                answer = get_answer_with_llm(user_input, api_base, model_name)
                 label = "переформулированный ИИ"
             else:
                 answer = get_answer(user_input)
@@ -242,6 +322,10 @@ if user_input:
 """
             st.markdown(response)
             st.session_state.messages.append({"role": "assistant", "content": response})
+
+# ============================================
+# 8. ФУТЕР
+# ============================================
 
 st.divider()
 
@@ -260,14 +344,14 @@ with st.expander("ℹ️ О проекте", expanded=False):
     1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
     2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
     3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
-    4. **Добавление ИИ** — через KeylessAI (бесплатный API без регистрации)
+    4. **Добавление ИИ** — через настраиваемый эндпоинт (KeylessAI, Duck.ai и др.)
 
     **Технологии:**
     - 🐍 Python 3.10
     - 🎨 Streamlit — интерфейс
     - 🧠 SentenceTransformer — эмбеддинги
     - 🗄️ Chroma DB — векторное хранилище
-    - 🌐 KeylessAI — переформулировка ответов
+    - 🌐 OpenAI-совместимый API для переформулировки
 
     **Версия:** {APP_VERSION}
 
