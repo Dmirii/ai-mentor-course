@@ -10,7 +10,7 @@ import openai
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -127,18 +127,16 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     return clean_text
 
 # ============================================
-# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ С ВОЗМОЖНОСТЬЮ ВЫБОРА ЭНДПОИНТА
+# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ (НЕ РАБОТАЕТ БЕЗ КЛЮЧЕЙ)
 # ============================================
 
 def get_answer_with_llm(question: str, api_base: str, model_name: str = "gpt-4o") -> str:
-    """
-    Переформулирует ответ через указанный API-эндпоинт
-    """
+    """Переформулирует ответ через указанный API-эндпоинт"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
     
-    # Пробуем разные эндпоинты, если первый не работает
+    # Пробуем разные эндпоинты
     endpoints_to_try = [
         api_base,
         "https://api.keyless.ai/v1",
@@ -149,10 +147,9 @@ def get_answer_with_llm(question: str, api_base: str, model_name: str = "gpt-4o"
     
     for endpoint in endpoints_to_try:
         try:
-            # Настраиваем клиент
             client = openai.OpenAI(
                 base_url=endpoint,
-                api_key="dummy"  # KeylessAI не требует ключа
+                api_key="dummy"
             )
             
             response = client.chat.completions.create(
@@ -191,8 +188,8 @@ with st.sidebar:
     
     # Выбор режима
     mode = st.radio(
-        "📚 Режим",
-        ["📖 Поиск по базе", "🧠 Синтез с ИИ"],
+        "📚 Режимы",
+        ["📖 Поиск по базе", "🧠 Синтез с ИИ", "🔍 Проверка базы"],
         index=0
     )
     st.divider()
@@ -201,7 +198,6 @@ with st.sidebar:
     if mode == "🧠 Синтез с ИИ":
         st.subheader("🌐 Настройки ИИ")
         
-        # Предустановленные эндпоинты
         preset_endpoints = {
             "KeylessAI (прокси)": "https://api.keyless.ai/v1",
             "KeylessAI (альтернативный)": "https://keylessai.thryx.workers.dev/v1",
@@ -217,16 +213,14 @@ with st.sidebar:
         )
         
         if preset_endpoints[selected_preset] == "custom":
-            custom_endpoint = st.text_input(
+            api_base = st.text_input(
                 "Введи свой эндпоинт",
                 placeholder="https://api.example.com/v1"
             )
-            api_base = custom_endpoint
         else:
             api_base = preset_endpoints[selected_preset]
             st.caption(f"📌 {api_base}")
         
-        # Выбор модели
         model_name = st.text_input(
             "Название модели",
             value="gpt-4o",
@@ -247,17 +241,12 @@ with st.sidebar:
         
         **Режимы:**
         - 📖 **Поиск по базе** — точные цитаты из лекций
-        - 🧠 **Синтез с ИИ** — переформулированный ответ через выбранный эндпоинт
-        
-        **Как работает ИИ-синтез:**
-        1. PROMPTUS находит фрагменты в лекциях
-        2. Отправляет их на выбранный эндпоинт
-        3. Получает переформулированный ответ
+        - 🧠 **Синтез с ИИ** — переформулировка через внешний API
+        - 🔍 **Проверка базы** — просмотр содержимого базы знаний
         
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
-        - 🌐 Поддержка любых OpenAI-совместимых API
         """)
 
 # ============================================
@@ -278,53 +267,170 @@ with col3:
 st.divider()
 
 # ============================================
-# 7. ЧАТ-ИНТЕРФЕЙС
+# 7. РЕЖИМ: ПОИСК ПО БАЗЕ
 # ============================================
 
-if "messages" not in st.session_state:
-    chunks_count = collection.count() if collection else 0
-    st.session_state.messages = [
-        {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
+if mode == "📖 Поиск по базе":
+    # Инициализация истории диалога
+    if "messages" not in st.session_state:
+        chunks_count = collection.count() if collection else 0
+        st.session_state.messages = [
+            {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
 🎯 Текущий режим: **{mode}**
 
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
-    ]
+        ]
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
+    user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-    with st.chat_message("assistant"):
-        with st.spinner("🔍 Ищу ответ..."):
-            if mode == "🧠 Синтез с ИИ":
-                # Используем переформулировку с выбранным эндпоинтом
-                answer = get_answer_with_llm(user_input, api_base, model_name)
-                label = "переформулированный ИИ"
-            else:
+        with st.chat_message("assistant"):
+            with st.spinner("🔍 Ищу ответ в лекциях..."):
                 answer = get_answer(user_input)
-                label = "из лекций"
-
-            response = f"""**📖 Ответ ментора ({label}):**
+                
+                response = f"""**📖 Ответ ментора (из лекций):**
 
 {answer}
 
 ---
 💡 *Источник: материалы курса по промпт-инжинирингу.*
 """
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
 
 # ============================================
-# 8. ФУТЕР
+# 8. РЕЖИМ: СИНТЕЗ С ИИ
+# ============================================
+
+elif mode == "🧠 Синтез с ИИ":
+    # Инициализация истории диалога
+    if "messages_llm" not in st.session_state:
+        chunks_count = collection.count() if collection else 0
+        st.session_state.messages_llm = [
+            {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
+
+📚 В базе знаний **{chunks_count}** фрагментов из лекций.
+🎯 Текущий режим: **{mode}**
+
+Задавай вопросы по курсу, и я найду ответ в материалах."""}
+        ]
+
+    for msg in st.session_state.messages_llm:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
+
+    if user_input:
+        st.session_state.messages_llm.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("🔍 Ищу ответ и переформулирую..."):
+                answer = get_answer_with_llm(user_input, api_base, model_name)
+                
+                response = f"""**📖 Ответ ментора (переформулированный ИИ):**
+
+{answer}
+
+---
+💡 *Источник: материалы курса по промпт-инжинирингу.*
+"""
+                st.markdown(response)
+                st.session_state.messages_llm.append({"role": "assistant", "content": response})
+
+# ============================================
+# 9. РЕЖИМ: ПРОВЕРКА БАЗЫ
+# ============================================
+
+elif mode == "🔍 Проверка базы":
+    st.title("🔍 Проверка базы знаний")
+    st.caption("Здесь ты можешь посмотреть, что хранится в базе знаний PROMPTUS")
+    
+    if collection is None:
+        st.error("❌ База знаний не загружена.")
+        st.stop()
+    
+    # Общая информация
+    total_chunks = collection.count()
+    st.metric("📊 Всего фрагментов в базе", total_chunks)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Кнопка для просмотра случайного фрагмента
+        if st.button("🎲 Показать случайный фрагмент"):
+            all_data = collection.get()
+            if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
+                random_id = random.choice(all_data['ids'])
+                result = collection.get(ids=[random_id])
+                if result and 'documents' in result:
+                    chunk_text = result['documents'][0]
+                    
+                    st.subheader("📄 Случайный фрагмент:")
+                    st.text_area("Содержимое:", chunk_text, height=200, key="random_chunk")
+                    
+                    # Анализ фрагмента
+                    word_count = len(chunk_text.split())
+                    char_count = len(chunk_text)
+                    st.caption(f"Слов: {word_count} | Символов: {char_count}")
+                    
+                    # Проверка на мусор
+                    if char_count < 50:
+                        st.warning("⚠️ Фрагмент слишком короткий (менее 50 символов)")
+                    if any(char in chunk_text for char in ['�', '■', '□']):
+                        st.warning("⚠️ Фрагмент содержит битые символы")
+                    if chunk_text.strip().startswith(('1.', '2.', '3.', '4.', '5.')):
+                        st.info("ℹ️ Фрагмент похож на оглавление")
+    
+    with col2:
+        # Кнопка для показа статистики
+        if st.button("📊 Показать статистику"):
+            all_data = collection.get()
+            if all_data and 'documents' in all_data:
+                docs = all_data['documents']
+                lengths = [len(doc) for doc in docs]
+                avg_len = sum(lengths) / len(lengths) if lengths else 0
+                
+                st.subheader("📊 Статистика")
+                st.metric("📏 Средняя длина", f"{avg_len:.0f} симв.")
+                st.metric("📏 Минимальная", f"{min(lengths) if lengths else 0} симв.")
+                st.metric("📏 Максимальная", f"{max(lengths) if lengths else 0} симв.")
+                
+                short_count = sum(1 for l in lengths if l < 50)
+                if short_count > 0:
+                    st.warning(f"⚠️ Найдено {short_count} коротких фрагментов (< 50 симв.)")
+                else:
+                    st.success("✅ Все фрагменты имеют нормальную длину (> 50 симв.)")
+    
+    # Информация о создании базы
+    with st.expander("ℹ️ Как создавалась база"):
+        st.markdown("""
+        **База знаний создана из PDF-файлов:**
+        1. Текст извлечён из PDF
+        2. Разбит на фрагменты по 1000 символов
+        3. Каждый фрагмент превращён в вектор (эмбеддинг)
+        4. Векторы сохранены в Chroma DB
+        
+        **Что проверять:**
+        - Длина фрагментов (должна быть > 50 символов)
+        - Наличие мусора (оглавления, номера страниц)
+        - Связность текста
+        """)
+
+# ============================================
+# 10. ФУТЕР
 # ============================================
 
 st.divider()
