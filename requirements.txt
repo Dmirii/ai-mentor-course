@@ -4,4 +4,4 @@ sentence-transformers
 pypdf
 transformers
 openai
-
+ainative-openai
