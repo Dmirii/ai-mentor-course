@@ -11,7 +11,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 
 # ============================================
 # КОНФИГУРАЦИЯ GigaChat
@@ -146,13 +146,13 @@ def get_gigachat_token() -> str:
             GIGACHAT_TOKEN_URL,
             headers={
                 "Authorization": f"Basic {GIGACHAT_CREDENTIALS}",
-                "RqUID": str(uuid.uuid4()),  # Генерируем новый UUID для каждого запроса
+                "RqUID": str(uuid.uuid4()),
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json"  # Обязательный заголовок
+                "Accept": "application/json"
             },
             data={"scope": GIGACHAT_SCOPE},
             timeout=30,
-            verify=False  # Отключаем проверку SSL для совместимости
+            verify=False
         )
         
         if response.status_code == 200:
@@ -188,7 +188,8 @@ def get_answer_with_gigachat(question: str) -> str:
                 "temperature": 0.7,
                 "max_tokens": 300
             },
-            timeout=60
+            timeout=60,
+            verify=False
         )
         
         if response.status_code == 200:
@@ -239,7 +240,8 @@ def test_gigachat() -> dict:
                 "temperature": 0.3,
                 "max_tokens": 50
             },
-            timeout=60
+            timeout=60,
+            verify=False
         )
         
         if test_response.status_code == 200:
