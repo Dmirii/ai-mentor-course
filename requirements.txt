@@ -6,3 +6,4 @@ transformers
 openai
 ainative-openai
 gigachat
+torchvision
