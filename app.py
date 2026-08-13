@@ -21,7 +21,7 @@ APP_VERSION = "2.1.0"
 
 # --- База знаний / эмбеддинги ---
 # Используем мультиязычную модель для лучшего понимания русского языка
-EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+EMBED_MODEL = "all-MiniLM-L6-v2"
 DB_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"  # v2: косинусная метрика + метаданные
 CHUNK_SIZE = 800          # Оптимальный размер для семантического поиска
