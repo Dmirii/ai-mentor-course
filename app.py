@@ -198,8 +198,8 @@ def load_models():
 
     # Базы нет или она пустая — строим из PDF
     if os.path.exists(DATA_DIR):
-        return model, create_db_from_pdf(client, model)
-    return model, None
+        return model, None 
+    
 
 
 model, collection = load_models()
