@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import random
 import requests
+import uuid
 from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -10,7 +11,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 
 # ============================================
 # КОНФИГУРАЦИЯ GigaChat
@@ -135,7 +136,7 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     return clean_text
 
 # ============================================
-# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ ЧЕРЕЗ GigaChat (requests)
+# 3. ФУНКЦИЯ РАБОТЫ С GigaChat
 # ============================================
 
 def get_gigachat_token() -> str:
@@ -145,11 +146,13 @@ def get_gigachat_token() -> str:
             GIGACHAT_TOKEN_URL,
             headers={
                 "Authorization": f"Basic {GIGACHAT_CREDENTIALS}",
-                "RqUID": "123e4567-e89b-12d3-a456-426614174000",
-                "Content-Type": "application/x-www-form-urlencoded"
+                "RqUID": str(uuid.uuid4()),  # Генерируем новый UUID для каждого запроса
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json"  # Обязательный заголовок
             },
             data={"scope": GIGACHAT_SCOPE},
-            timeout=30
+            timeout=30,
+            verify=False  # Отключаем проверку SSL для совместимости
         )
         
         if response.status_code == 200:
@@ -160,12 +163,11 @@ def get_gigachat_token() -> str:
         return None
 
 def get_answer_with_gigachat(question: str) -> str:
-    """Переформулирует ответ через GigaChat API (через requests)"""
+    """Переформулирует ответ через GigaChat API"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
     
-    # Получаем токен
     token = get_gigachat_token()
     if not token:
         return f"{raw}\n\n⚠️ *Не удалось получить токен GigaChat. Проверьте ключ.*"
@@ -193,7 +195,7 @@ def get_answer_with_gigachat(question: str) -> str:
             data = response.json()
             return data["choices"][0]["message"]["content"]
         else:
-            return f"{raw}\n\n⚠️ *Ошибка GigaChat: {response.status_code} {response.text[:100]}*"
+            return f"{raw}\n\n⚠️ *Ошибка GigaChat: {response.status_code}*"
     except Exception as e:
         return f"{raw}\n\n⚠️ *Ошибка при обращении к GigaChat: {str(e)}*"
 
@@ -218,36 +220,36 @@ def test_gigachat() -> dict:
         result["token_message"] = "✅ Токен получен (первые 20 символов: " + token[:20] + "...)"
     else:
         result["token_message"] = "❌ Не удалось получить токен. Проверь ключ и интернет."
+        return result
     
     # 2. Проверяем API запрос
-    if token:
-        try:
-            test_response = requests.post(
-                GIGACHAT_API_URL,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "GigaChat-2-Max",
-                    "messages": [
-                        {"role": "system", "content": "Ты — полезный ассистент."},
-                        {"role": "user", "content": "Напиши одно предложение о нейросетях."}
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 50
-                },
-                timeout=60
-            )
-            
-            if test_response.status_code == 200:
-                result["api_status"] = True
-                result["api_message"] = "✅ API работает"
-                result["response"] = test_response.json()["choices"][0]["message"]["content"]
-            else:
-                result["api_message"] = f"❌ Ошибка API: {test_response.status_code} {test_response.text[:100]}"
-        except Exception as e:
-            result["api_message"] = f"❌ Ошибка: {str(e)}"
+    try:
+        test_response = requests.post(
+            GIGACHAT_API_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "GigaChat-2-Max",
+                "messages": [
+                    {"role": "system", "content": "Ты — полезный ассистент."},
+                    {"role": "user", "content": "Напиши одно предложение о нейросетях."}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 50
+            },
+            timeout=60
+        )
+        
+        if test_response.status_code == 200:
+            result["api_status"] = True
+            result["api_message"] = "✅ API работает"
+            result["response"] = test_response.json()["choices"][0]["message"]["content"]
+        else:
+            result["api_message"] = f"❌ Ошибка API: {test_response.status_code}"
+    except Exception as e:
+        result["api_message"] = f"❌ Ошибка: {str(e)}"
     
     return result
 
@@ -277,7 +279,6 @@ with st.sidebar:
     )
     st.divider()
 
-    # Информация о базе
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
     
@@ -392,10 +393,8 @@ elif mode == "🛠 Отладка":
     st.title("🛠 Отладка")
     st.caption(f"Версия: {APP_VERSION}")
     
-    # Вкладки для разных проверок
     tab1, tab2 = st.tabs(["🔍 Проверка базы", "🧠 Проверка GigaChat"])
     
-    # ========== ВКЛАДКА 1: ПРОВЕРКА БАЗЫ ==========
     with tab1:
         st.subheader("📊 Информация о базе")
         
@@ -462,7 +461,6 @@ elif mode == "🛠 Отладка":
                 - Связность текста
                 """)
     
-    # ========== ВКЛАДКА 2: ПРОВЕРКА GigaChat ==========
     with tab2:
         st.subheader("🧠 Проверка GigaChat")
         st.markdown("""
@@ -477,13 +475,11 @@ elif mode == "🛠 Отладка":
             
             st.subheader("📋 Результат проверки")
             
-            # Результат получения токена
             if result["token_status"]:
                 st.success(result["token_message"])
             else:
                 st.error(result["token_message"])
             
-            # Результат API запроса
             if result["api_status"]:
                 st.success(result["api_message"])
                 st.subheader("📝 Ответ модели на тестовый запрос:")
@@ -491,7 +487,6 @@ elif mode == "🛠 Отладка":
             else:
                 st.error(result["api_message"])
             
-            # Если всё работает
             if result["token_status"] and result["api_status"]:
                 st.balloons()
                 st.success("🎉 GigaChat работает корректно!")
