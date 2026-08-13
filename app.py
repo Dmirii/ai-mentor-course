@@ -1,17 +1,24 @@
 import streamlit as st
 import os
 import random
+import requests
 from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
-from gigachat import GigaChat
-from gigachat.models import Chat, Messages
 
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
+
+# ============================================
+# КОНФИГУРАЦИЯ GigaChat
+# ============================================
+GIGACHAT_CREDENTIALS = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OmM2ODQ5ZjM1LTE2ZGUtNDNjNC1iMDAyLTUzNmYyYTRmZDgyNA=="
+GIGACHAT_SCOPE = "GIGACHAT_API_PERS"
+GIGACHAT_TOKEN_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+GIGACHAT_API_URL = "https://api.giga.chat/v1/chat/completions"
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -128,45 +135,124 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     return clean_text
 
 # ============================================
-# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ ЧЕРЕЗ GigaChat
+# 3. ФУНКЦИЯ ПЕРЕФОРМУЛИРОВКИ ЧЕРЕЗ GigaChat (requests)
 # ============================================
 
-# Твой Authorization Key (зашит в коде)
-GIGACHAT_CREDENTIALS = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OmM2ODQ5ZjM1LTE2ZGUtNDNjNC1iMDAyLTUzNmYyYTRmZDgyNA=="
+def get_gigachat_token() -> str:
+    """Получает токен доступа к GigaChat API"""
+    try:
+        response = requests.post(
+            GIGACHAT_TOKEN_URL,
+            headers={
+                "Authorization": f"Basic {GIGACHAT_CREDENTIALS}",
+                "RqUID": "123e4567-e89b-12d3-a456-426614174000",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            data={"scope": GIGACHAT_SCOPE},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json().get("access_token")
+        else:
+            return None
+    except Exception as e:
+        return None
 
 def get_answer_with_gigachat(question: str) -> str:
-    """Переформулирует ответ через GigaChat API (Сбер)"""
+    """Переформулирует ответ через GigaChat API (через requests)"""
     raw = get_answer(question)
     if raw.startswith("❌"):
         return raw
     
+    # Получаем токен
+    token = get_gigachat_token()
+    if not token:
+        return f"{raw}\n\n⚠️ *Не удалось получить токен GigaChat. Проверьте ключ.*"
+    
     try:
-        with GigaChat(
-            credentials=GIGACHAT_CREDENTIALS,
-            verify_ssl_certs=False,
-            scope="GIGACHAT_API_PERS"
-        ) as client:
-            payload = Chat(
-                messages=[
-                    Messages(
-                        role="system",
-                        content="Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты. Отвечай только на русском языке."
-                    ),
-                    Messages(
-                        role="user",
-                        content=f"Вопрос: {question}\n\nТекст из лекций: {raw}"
-                    )
+        response = requests.post(
+            GIGACHAT_API_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "GigaChat-2-Max",
+                "messages": [
+                    {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты. Отвечай только на русском языке."},
+                    {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
                 ],
-                temperature=0.7,
-                max_tokens=300,
-            )
-            response = client.chat(payload)
-            return response.choices[0].message.content
+                "temperature": 0.7,
+                "max_tokens": 300
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        else:
+            return f"{raw}\n\n⚠️ *Ошибка GigaChat: {response.status_code} {response.text[:100]}*"
     except Exception as e:
-        return f"{raw}\n\n⚠️ *Переформулировка через GigaChat недоступна. Показан исходный фрагмент.*"
+        return f"{raw}\n\n⚠️ *Ошибка при обращении к GigaChat: {str(e)}*"
 
 # ============================================
-# 4. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
+# 4. ФУНКЦИЯ ДЛЯ ОТЛАДКИ GigaChat
+# ============================================
+
+def test_gigachat() -> dict:
+    """Тестирует подключение к GigaChat и возвращает результат"""
+    result = {
+        "token_status": False,
+        "token_message": "",
+        "api_status": False,
+        "api_message": "",
+        "response": ""
+    }
+    
+    # 1. Проверяем получение токена
+    token = get_gigachat_token()
+    if token:
+        result["token_status"] = True
+        result["token_message"] = "✅ Токен получен (первые 20 символов: " + token[:20] + "...)"
+    else:
+        result["token_message"] = "❌ Не удалось получить токен. Проверь ключ и интернет."
+    
+    # 2. Проверяем API запрос
+    if token:
+        try:
+            test_response = requests.post(
+                GIGACHAT_API_URL,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "GigaChat-2-Max",
+                    "messages": [
+                        {"role": "system", "content": "Ты — полезный ассистент."},
+                        {"role": "user", "content": "Напиши одно предложение о нейросетях."}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 50
+                },
+                timeout=60
+            )
+            
+            if test_response.status_code == 200:
+                result["api_status"] = True
+                result["api_message"] = "✅ API работает"
+                result["response"] = test_response.json()["choices"][0]["message"]["content"]
+            else:
+                result["api_message"] = f"❌ Ошибка API: {test_response.status_code} {test_response.text[:100]}"
+        except Exception as e:
+            result["api_message"] = f"❌ Ошибка: {str(e)}"
+    
+    return result
+
+# ============================================
+# 5. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
 # ============================================
 
 st.set_page_config(
@@ -176,7 +262,7 @@ st.set_page_config(
 )
 
 # ============================================
-# 5. БОКОВОЕ МЕНЮ
+# 6. БОКОВОЕ МЕНЮ
 # ============================================
 
 with st.sidebar:
@@ -186,33 +272,26 @@ with st.sidebar:
 
     mode = st.radio(
         "📚 Режимы",
-        ["📖 Поиск по базе", "🧠 Синтез с ИИ (GigaChat)", "🔍 Проверка базы"],
+        ["📚 Обучение", "🧠 Синтез с ИИ", "🛠 Отладка"],
         index=0
     )
     st.divider()
 
-    # Информация о GigaChat
-    if mode == "🧠 Синтез с ИИ (GigaChat)":
-        st.subheader("🌐 GigaChat")
-        st.info("💡 GigaChat Ultra 3.5 (Freemium — 365 млн токенов/год)")
-        st.caption("🔑 API-ключ уже зашит в код")
-        st.divider()
-
     # Информация о базе
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
-
+    
     st.divider()
 
-    with st.expander("ℹ️ Как работает PROMPTUS"):
+    with st.expander("ℹ️ О PROMPTUS"):
         st.markdown("""
         **PROMPTUS** — ментор по промпт-инжинирингу.
-
+        
         **Режимы:**
-        - 📖 **Поиск по базе** — точные цитаты из лекций
-        - 🧠 **Синтез с ИИ (GigaChat)** — переформулировка через GigaChat (Сбер)
-        - 🔍 **Проверка базы** — просмотр содержимого базы знаний
-
+        - 📚 **Обучение** — поиск по базе
+        - 🧠 **Синтез с ИИ** — переформулировка через GigaChat
+        - 🛠 **Отладка** — проверка базы и GigaChat
+        
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
@@ -220,34 +299,20 @@ with st.sidebar:
         """)
 
 # ============================================
-# 6. ШАПКА
+# 7. РЕЖИМ: ОБУЧЕНИЕ
 # ============================================
 
-col1, col2, col3 = st.columns([1, 5, 1])
-with col1:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
-with col2:
-    st.title("🧠 PROMPTUS")
-    st.caption("Ментор по промпт-инжинирингу — отвечает на вопросы по материалам курса")
-with col3:
-    st.caption("")
-    st.caption("")
-    st.caption(f"**v{APP_VERSION}**")
-
-st.divider()
-
-# ============================================
-# 7. РЕЖИМ: ПОИСК ПО БАЗЕ
-# ============================================
-
-if mode == "📖 Поиск по базе":
+if mode == "📚 Обучение":
+    st.title("📚 Обучение с PROMPTUS")
+    st.caption(f"Версия: {APP_VERSION} | В базе: {collection.count() if collection else 0} фрагментов")
+    
     if "messages" not in st.session_state:
         chunks_count = collection.count() if collection else 0
         st.session_state.messages = [
             {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
-🎯 Текущий режим: **{mode}**
+🎯 Текущий режим: **Поиск по базе**
 
 Задавай вопросы по курсу, и я найду ответ в материалах."""}
         ]
@@ -266,7 +331,6 @@ if mode == "📖 Поиск по базе":
         with st.chat_message("assistant"):
             with st.spinner("🔍 Ищу ответ в лекциях..."):
                 answer = get_answer(user_input)
-
                 response = f"""**📖 Ответ ментора (из лекций):**
 
 {answer}
@@ -278,21 +342,22 @@ if mode == "📖 Поиск по базе":
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
 # ============================================
-# 8. РЕЖИМ: СИНТЕЗ С ИИ (GigaChat)
+# 8. РЕЖИМ: СИНТЕЗ С ИИ
 # ============================================
 
-elif mode == "🧠 Синтез с ИИ (GigaChat)":
+elif mode == "🧠 Синтез с ИИ":
+    st.title("🧠 Синтез с ИИ (GigaChat)")
+    st.caption(f"Версия: {APP_VERSION} | Модель: GigaChat-2-Max")
+    
     if "messages_gigachat" not in st.session_state:
         chunks_count = collection.count() if collection else 0
         st.session_state.messages_gigachat = [
             {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
 
+🧠 Текущий режим: **Синтез с ИИ (GigaChat)**
 📚 В базе знаний **{chunks_count}** фрагментов из лекций.
-🎯 Текущий режим: **{mode}**
 
-🔑 API-ключ GigaChat уже зашит в код.
-
-Задавай вопросы по курсу, и я найду ответ в материалах."""}
+Задавай вопросы по курсу, и я найду ответ и переформулирую его."""}
         ]
 
     for msg in st.session_state.messages_gigachat:
@@ -309,7 +374,6 @@ elif mode == "🧠 Синтез с ИИ (GigaChat)":
         with st.chat_message("assistant"):
             with st.spinner("🔍 Ищу ответ и переформулирую через GigaChat..."):
                 answer = get_answer_with_gigachat(user_input)
-
                 response = f"""**📖 Ответ ментора (переформулированный GigaChat):**
 
 {answer}
@@ -321,77 +385,118 @@ elif mode == "🧠 Синтез с ИИ (GigaChat)":
                 st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
 
 # ============================================
-# 9. РЕЖИМ: ПРОВЕРКА БАЗЫ
+# 9. РЕЖИМ: ОТЛАДКА
 # ============================================
 
-elif mode == "🔍 Проверка базы":
-    st.title("🔍 Проверка базы знаний")
-    st.caption("Здесь ты можешь посмотреть, что хранится в базе знаний PROMPTUS")
-
-    if collection is None:
-        st.error("❌ База знаний не загружена.")
-        st.stop()
-
-    total_chunks = collection.count()
-    st.metric("📊 Всего фрагментов в базе", total_chunks)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("🎲 Показать случайный фрагмент"):
-            all_data = collection.get()
-            if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
-                random_id = random.choice(all_data['ids'])
-                result = collection.get(ids=[random_id])
-                if result and 'documents' in result:
-                    chunk_text = result['documents'][0]
-
-                    st.subheader("📄 Случайный фрагмент:")
-                    st.text_area("Содержимое:", chunk_text, height=200, key="random_chunk")
-
-                    word_count = len(chunk_text.split())
-                    char_count = len(chunk_text)
-                    st.caption(f"Слов: {word_count} | Символов: {char_count}")
-
-                    if char_count < 50:
-                        st.warning("⚠️ Фрагмент слишком короткий (менее 50 символов)")
-                    if any(char in chunk_text for char in ['�', '■', '□']):
-                        st.warning("⚠️ Фрагмент содержит битые символы")
-                    if chunk_text.strip().startswith(('1.', '2.', '3.', '4.', '5.')):
-                        st.info("ℹ️ Фрагмент похож на оглавление")
-
-    with col2:
-        if st.button("📊 Показать статистику"):
-            all_data = collection.get()
-            if all_data and 'documents' in all_data:
-                docs = all_data['documents']
-                lengths = [len(doc) for doc in docs]
-                avg_len = sum(lengths) / len(lengths) if lengths else 0
-
-                st.subheader("📊 Статистика")
-                st.metric("📏 Средняя длина", f"{avg_len:.0f} симв.")
-                st.metric("📏 Минимальная", f"{min(lengths) if lengths else 0} симв.")
-                st.metric("📏 Максимальная", f"{max(lengths) if lengths else 0} симв.")
-
-                short_count = sum(1 for l in lengths if l < 50)
-                if short_count > 0:
-                    st.warning(f"⚠️ Найдено {short_count} коротких фрагментов (< 50 симв.)")
-                else:
-                    st.success("✅ Все фрагменты имеют нормальную длину (> 50 симв.)")
-
-    with st.expander("ℹ️ Как создавалась база"):
+elif mode == "🛠 Отладка":
+    st.title("🛠 Отладка")
+    st.caption(f"Версия: {APP_VERSION}")
+    
+    # Вкладки для разных проверок
+    tab1, tab2 = st.tabs(["🔍 Проверка базы", "🧠 Проверка GigaChat"])
+    
+    # ========== ВКЛАДКА 1: ПРОВЕРКА БАЗЫ ==========
+    with tab1:
+        st.subheader("📊 Информация о базе")
+        
+        if collection is None:
+            st.error("❌ База знаний не загружена.")
+        else:
+            total_chunks = collection.count()
+            st.metric("📊 Всего фрагментов в базе", total_chunks)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🎲 Показать случайный фрагмент"):
+                    all_data = collection.get()
+                    if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
+                        random_id = random.choice(all_data['ids'])
+                        result = collection.get(ids=[random_id])
+                        if result and 'documents' in result:
+                            chunk_text = result['documents'][0]
+                            st.subheader("📄 Случайный фрагмент:")
+                            st.text_area("Содержимое:", chunk_text, height=200, key="random_chunk")
+                            
+                            word_count = len(chunk_text.split())
+                            char_count = len(chunk_text)
+                            st.caption(f"Слов: {word_count} | Символов: {char_count}")
+                            
+                            if char_count < 50:
+                                st.warning("⚠️ Фрагмент слишком короткий (менее 50 символов)")
+                            if any(char in chunk_text for char in ['�', '■', '□']):
+                                st.warning("⚠️ Фрагмент содержит битые символы")
+                            if chunk_text.strip().startswith(('1.', '2.', '3.', '4.', '5.')):
+                                st.info("ℹ️ Фрагмент похож на оглавление")
+            
+            with col2:
+                if st.button("📊 Показать статистику"):
+                    all_data = collection.get()
+                    if all_data and 'documents' in all_data:
+                        docs = all_data['documents']
+                        lengths = [len(doc) for doc in docs]
+                        avg_len = sum(lengths) / len(lengths) if lengths else 0
+                        
+                        st.subheader("📊 Статистика")
+                        st.metric("📏 Средняя длина", f"{avg_len:.0f} симв.")
+                        st.metric("📏 Минимальная", f"{min(lengths) if lengths else 0} симв.")
+                        st.metric("📏 Максимальная", f"{max(lengths) if lengths else 0} симв.")
+                        
+                        short_count = sum(1 for l in lengths if l < 50)
+                        if short_count > 0:
+                            st.warning(f"⚠️ Найдено {short_count} коротких фрагментов (< 50 симв.)")
+                        else:
+                            st.success("✅ Все фрагменты имеют нормальную длину (> 50 симв.)")
+            
+            with st.expander("ℹ️ Как создавалась база"):
+                st.markdown("""
+                **База знаний создана из PDF-файлов:**
+                1. Текст извлечён из PDF
+                2. Разбит на фрагменты по 1000 символов
+                3. Каждый фрагмент превращён в вектор (эмбеддинг)
+                4. Векторы сохранены в Chroma DB
+                
+                **Что проверять:**
+                - Длина фрагментов (должна быть > 50 символов)
+                - Наличие мусора (оглавления, номера страниц)
+                - Связность текста
+                """)
+    
+    # ========== ВКЛАДКА 2: ПРОВЕРКА GigaChat ==========
+    with tab2:
+        st.subheader("🧠 Проверка GigaChat")
         st.markdown("""
-        **База знаний создана из PDF-файлов:**
-        1. Текст извлечён из PDF
-        2. Разбит на фрагменты по 1000 символов
-        3. Каждый фрагмент превращён в вектор (эмбеддинг)
-        4. Векторы сохранены в Chroma DB
-
-        **Что проверять:**
-        - Длина фрагментов (должна быть > 50 символов)
-        - Наличие мусора (оглавления, номера страниц)
-        - Связность текста
+        Проверяет подключение к GigaChat API:
+        1. Получение токена
+        2. Тестовый запрос к модели
         """)
+        
+        if st.button("🔍 Запустить проверку GigaChat"):
+            with st.spinner("🔄 Проверяю подключение..."):
+                result = test_gigachat()
+            
+            st.subheader("📋 Результат проверки")
+            
+            # Результат получения токена
+            if result["token_status"]:
+                st.success(result["token_message"])
+            else:
+                st.error(result["token_message"])
+            
+            # Результат API запроса
+            if result["api_status"]:
+                st.success(result["api_message"])
+                st.subheader("📝 Ответ модели на тестовый запрос:")
+                st.info(result["response"])
+            else:
+                st.error(result["api_message"])
+            
+            # Если всё работает
+            if result["token_status"] and result["api_status"]:
+                st.balloons()
+                st.success("🎉 GigaChat работает корректно!")
+            else:
+                st.warning("⚠️ Проверьте ключ и интернет-соединение.")
 
 # ============================================
 # 10. ФУТЕР
