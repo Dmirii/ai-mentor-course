@@ -13,4 +13,4 @@ venv/
 # IDE
 .vscode/
 .idea/
-*.swp
+*.swp"quickRAG/" 

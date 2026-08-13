@@ -11,7 +11,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.5"
 
 # ============================================
 # КОНФИГУРАЦИЯ GigaChat
@@ -21,97 +21,6 @@ GIGACHAT_SCOPE = "GIGACHAT_API_PERS"
 GIGACHAT_TOKEN_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 GIGACHAT_API_URL = "https://api.giga.chat/v1/chat/completions"
 GIGACHAT_MODEL = "GigaChat-2-Max"
-
-# ============================================
-# СТРУКТУРА КУРСА (добавляем в базу)
-# ============================================
-COURSE_STRUCTURE = """
-СТРУКТУРА КУРСА ПО ПРОМПТ-ИНЖИНИРИНГУ
-
-Модуль 1. Основы Prompt engineering
-  Лекция 1.1: Введение в prompt engineering
-    - Что такое промпт-инжиниринг
-    - Основные понятия и термины
-    - Роль промпт-инженера
-  
-  Лекция 1.1.2: Ключевые навыки Prompt engineer
-    - Проектирование запросов
-    - Анализ и контроль качества ответов
-    - Интеграция и автоматизация
-    - Поддержка и обучение команды
-    - Исследования и эксперименты
-  
-  Лекция 1.2.1: Простые типы prompts
-    - Zero-shot prompting
-    - One-shot prompting
-    - Few-shot prompting
-    - Chain-of-Thought
-    - Instruction-based
-    - Role prompting
-    - Meta Prompting
-  
-  Лекция 1.2.2: Продвинутые типы prompts
-    - Self-consistency
-    - Generated Knowledge Prompting
-    - Prompt Chaining
-    - Tree of Thoughts
-    - Automatic Reasoning prompt
-    - Retrieval Augmented Generation (RAG)
-  
-  Лекция 1.3.1: Инструменты для создания prompts
-    - Чат-боты
-    - Playground
-    - IDE плагины
-    - Маркетплейсы prompt
-    - Библиотеки для интеграции LLM
-  
-  Лекция 1.3.2: Практика работы с Prompts инструментами
-    - YandexGPT Playground
-    - Анализ отзывов с Алисой
-  
-  Лекция 1.4.1: Генерация изображений
-    - Особенности генеративных моделей
-    - Влияние параметров
-    - Обзор инструментов (DALL-E, Midjourney, Stable Diffusion, Kandinsky)
-    - Ошибки и способы их избежать
-  
-  Лекция 1.4.2: Генерация видео и анализ изображений
-    - Обзор моделей для генерации видео
-    - Шедеврум от Яндекса
-    - Кандинский от Сбера
-    - Базовая структура промпта для видео
-    - Анализ изображений
-  
-  Лекция 1.5.1: Оптимизация prompts
-    - Метрики и цели оптимизации
-    - Приёмы оптимизации
-    - Инструменты для оптимизации
-    - A/B тестирование
-  
-  Лекция 1.5.2: Безопасность prompts
-    - Угрозы и риски (prompt injection, утечка данных)
-    - Типы атак
-    - Методы защиты
-    - Инструменты безопасности
-
-Модуль 2. Сферы применения Prompt engineering
-  - Применение в бизнесе, маркетинге, образовании
-  - Использование в дизайне и концепт-арте
-  - Рекламные кейсы
-  - Этические аспекты
-
-Модуль 3. Инtegration приложений и Prompt engineering
-  - Встраивание LLM в продукты
-  - Работа с API (OpenAI, Anthropic, YandexGPT)
-  - Библиотеки для интеграции (LangChain, Haystack, Llamaindex)
-  - Автоматизация процессов
-
-Модуль 4. Устройство LLM и Prompt engineering
-  - Как текст превращается в числа
-  - Как работают большие языковые модели
-  - Архитектура трансформеров
-  - Обучение и тонкая настройка моделей
-"""
 
 # ============================================
 # 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
@@ -143,29 +52,6 @@ def create_db_from_pdf(model):
 
     all_chunks = []
     all_ids = []
-    
-    # Добавляем структуру курса в базу
-    all_chunks.append(COURSE_STRUCTURE)
-    all_ids.append("course_structure")
-    
-    # Добавляем отдельные фрагменты для быстрого поиска названий лекций
-    lecture_names = [
-        "Лекция 1: Введение в prompt engineering",
-        "Лекция 2: Ключевые навыки Prompt engineer",
-        "Лекция 3: Простые типы prompts",
-        "Лекция 4: Продвинутые типы prompts",
-        "Лекция 5: Инструменты для создания prompts",
-        "Лекция 6: Практика работы с Prompts инструментами",
-        "Лекция 7: Генерация изображений",
-        "Лекция 8: Генерация видео и анализ изображений",
-        "Лекция 9: Оптимизация prompts",
-        "Лекция 10: Безопасность prompts"
-    ]
-    
-    for name in lecture_names:
-        all_chunks.append(name)
-        all_ids.append(f"lecture_{name[:10]}")
-    
     pdf_files = list(Path("data").glob("**/*.pdf"))
 
     if not pdf_files:
@@ -203,7 +89,7 @@ model, collection, db_exists = load_models()
 # 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА (БАЗОВЫЙ ПОИСК)
 # ============================================
 
-def get_answer(question: str, max_chunks: int = 10) -> str:
+def get_answer(question: str, max_chunks: int = 5) -> str:
     """Ищет ответ в базе и возвращает связный текст"""
     if collection is None:
         return "❌ База знаний не загружена."
@@ -220,18 +106,16 @@ def get_answer(question: str, max_chunks: int = 10) -> str:
     clean_chunks = []
     for doc in results['documents'][0]:
         doc = doc.strip()
-        # Пропускаем короткие фрагменты
         if len(doc) < 50:
             continue
-        # Пропускаем оглавления и списки
-        if doc.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.')) and '......' in doc:
+        if doc.startswith(('1.', '2.', '3.', '4.', '5.')) and '......' in doc:
             continue
         if 'Оглавление' in doc or 'Table of Contents' in doc:
             continue
         clean_chunks.append(doc)
 
     if clean_chunks:
-        all_text = " ".join(clean_chunks[:5])  # Берём первые 5 самых релевантных
+        all_text = " ".join(clean_chunks[:3])
     else:
         all_text = " ".join(results['documents'][0][:3])
 
@@ -298,9 +182,6 @@ def get_answer_with_gigachat(question: str, raw_answer: str, temperature: float 
 Отвечай только на русском языке.
 Если в тексте нет точного ответа — честно скажи об этом.
 Не выдумывай цифры, факты и названия, которых нет в тексте.
-Если спрашивают о структуре курса — перечисли модули из материалов.
-Если спрашивают о темах — перечисли конкретные темы из лекций.
-Если спрашивают о лекциях — назови их по номерам и темам.
 Структурируй ответ: используй списки и абзацы для удобства чтения.
 Будь полезным и дружелюбным."""},
                     {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw_answer}"}
@@ -370,7 +251,36 @@ def test_gigachat() -> dict:
     return result
 
 # ============================================
-# 4. ИНТЕРФЕЙС
+# 4. ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СПИСКА ЛЕКЦИЙ ИЗ БАЗЫ
+# ============================================
+
+def get_lecture_list_from_db() -> list:
+    """Извлекает список уникальных названий лекций из метаданных базы"""
+    if collection is None:
+        return []
+    
+    try:
+        # Пробуем получить все метаданные
+        all_data = collection.get()
+        if not all_data or not all_data['metadatas']:
+            return []
+        
+        # Извлекаем названия лекций из метаданных
+        lectures = set()
+        for meta in all_data['metadatas']:
+            if meta and 'source' in meta:
+                # Извлекаем название файла без расширения
+                source = meta['source']
+                name = Path(source).stem
+                if name and len(name) > 3:
+                    lectures.add(name)
+        
+        return sorted(list(lectures))
+    except Exception as e:
+        return []
+
+# ============================================
+# 5. ИНТЕРФЕЙС
 # ============================================
 
 st.set_page_config(
@@ -380,7 +290,7 @@ st.set_page_config(
 )
 
 # ============================================
-# 5. БОКОВОЕ МЕНЮ
+# 6. БОКОВОЕ МЕНЮ
 # ============================================
 
 with st.sidebar:
@@ -427,7 +337,7 @@ with st.sidebar:
         """)
 
 # ============================================
-# 6. РЕЖИМ: СИНТЕЗ С ИИ
+# 7. РЕЖИМ: СИНТЕЗ С ИИ
 # ============================================
 
 if mode == "🧠 Синтез с ИИ":
@@ -471,7 +381,7 @@ if mode == "🧠 Синтез с ИИ":
                 st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
 
 # ============================================
-# 7. РЕЖИМ: ТЕСТИРОВАНИЕ
+# 8. РЕЖИМ: ТЕСТИРОВАНИЕ
 # ============================================
 
 elif mode == "📝 Тестирование":
@@ -534,7 +444,7 @@ elif mode == "📝 Тестирование":
             st.info("👆 Напиши ответ в поле выше и нажми 'Проверить ответ'.")
 
 # ============================================
-# 8. РЕЖИМ: ОТЛАДКА
+# 9. РЕЖИМ: ОТЛАДКА
 # ============================================
 
 elif mode == "🛠 Отладка":
@@ -546,8 +456,9 @@ elif mode == "🛠 Отладка":
     else:
         st.error("❌ База знаний не загружена.")
     
-    tab1, tab2 = st.tabs(["🔍 Проверка базы", "🧠 Проверка GigaChat"])
+    tab1, tab2, tab3 = st.tabs(["🔍 Проверка базы", "📚 Список лекций", "🧠 Проверка GigaChat"])
     
+    # ========== ВКЛАДКА 1: ПРОВЕРКА БАЗЫ ==========
     with tab1:
         st.subheader("📊 Информация о базе")
         
@@ -604,7 +515,7 @@ elif mode == "🛠 Отладка":
                 st.markdown(
                     "**База знаний создана из PDF-файлов:**\n\n"
                     "1. Текст извлечён из PDF\n"
-                    "2. Разбит на фрагменты по 1000 символов\n"
+                    "2. Разбит на фрагменты по 2000 символов\n"
                     "3. Каждый фрагмент превращён в вектор (эмбеддинг)\n"
                     "4. Векторы сохранены в Chroma DB\n\n"
                     "**Что проверять:**\n"
@@ -613,7 +524,37 @@ elif mode == "🛠 Отладка":
                     "- Связность текста"
                 )
     
+    # ========== ВКЛАДКА 2: СПИСОК ЛЕКЦИЙ ==========
     with tab2:
+        st.subheader("📚 Список доступных лекций")
+        
+        if collection is None:
+            st.error("❌ База знаний не загружена.")
+        else:
+            lectures = get_lecture_list_from_db()
+            if lectures:
+                st.success(f"✅ Найдено {len(lectures)} лекций:")
+                for i, name in enumerate(lectures, 1):
+                    st.write(f"{i}. {name}")
+            else:
+                st.warning("⚠️ Не удалось извлечь список лекций из базы.")
+                
+                # Показываем альтернативный способ: извлекаем из имён файлов в метаданных
+                try:
+                    all_data = collection.get()
+                    if all_data and all_data['metadatas']:
+                        st.info("**Альтернативный способ (из метаданных):**")
+                        sources = set()
+                        for meta in all_data['metadatas']:
+                            if meta and 'source' in meta:
+                                sources.add(meta['source'])
+                        for i, source in enumerate(sorted(sources), 1):
+                            st.write(f"{i}. {Path(source).stem}")
+                except:
+                    pass
+    
+    # ========== ВКЛАДКА 3: ПРОВЕРКА GigaChat ==========
+    with tab3:
         st.subheader("🧠 Проверка GigaChat")
         st.markdown(
             "Проверяет подключение к GigaChat API:\n\n"
@@ -646,7 +587,7 @@ elif mode == "🛠 Отладка":
                 st.warning("⚠️ Проверьте ключ и интернет-соединение.")
 
 # ============================================
-# 9. РЕЖИМ: О PROMPTUS
+# 10. РЕЖИМ: О PROMPTUS
 # ============================================
 
 elif mode == "ℹ️ О PROMPTUS":
@@ -671,7 +612,7 @@ elif mode == "ℹ️ О PROMPTUS":
         "┌─────────────────────────────────────────────────────────────────────────────┐\n"
         "│  1. PDF-лекции (загружены на GitHub)                                       │\n"
         "│     └─> Извлечение текста через PyPDF                                     │\n"
-        "│     └─> Разбивка на фрагменты по 1000 символов                             │\n"
+        "│     └─> Разбивка на фрагменты по 2000 символов                             │\n"
         "└─────────────────────────────────────────────────────────────────────────────┘\n"
         "                                        │\n"
         "                                        ▼\n"
@@ -744,7 +685,7 @@ elif mode == "ℹ️ О PROMPTUS":
     st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
 
 # ============================================
-# 10. ФУТЕР
+# 11. ФУТЕР
 # ============================================
 
 if mode == "🛠 Отладка":
