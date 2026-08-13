@@ -13,7 +13,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 
 # ============================================
 # КОНФИГУРАЦИЯ (все настройки в одном месте)
@@ -753,3 +753,54 @@ elif mode == "ℹ️ О PROMPTUS":
         "Приложение задеплоено на `share.streamlit.io`.\n\n"
         "---\n\n"
         "**Шаг 7: Тестирование и доработка**\n\n"
+        "Добавлены режимы, ползунок температуры, инструкция для новичков."
+    )
+
+    st.subheader("🔗 Проекты, которые учитываются")
+
+    if collection:
+        st.info(f"📚 В базе знаний **{collection.count()}** фрагментов из следующих PDF-лекций:")
+
+        pdf_files = sorted(list(Path(DATA_DIR).glob("**/*.pdf")))
+        if pdf_files:
+            for pdf in pdf_files:
+                st.write(f"- `{pdf.name}`")
+        else:
+            st.write("- PDF-файлы не найдены")
+    else:
+        st.warning(f"⚠️ База знаний не загружена. Проверьте папку `{DATA_DIR}/`.")
+
+    st.divider()
+    st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
+
+# ============================================
+# 11. ФУТЕР
+# ============================================
+
+if mode == "🛠 Отладка":
+    st.divider()
+
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
+    with col1:
+        st.caption("📚 Материалы: PDF-лекции по промпт-инжинирингу")
+    with col3:
+        st.caption("🔗 [Исходный код на GitHub](https://github.com/Dmirii/ai-mentor-course)")
+
+    with st.expander("ℹ️ О проекте", expanded=False):
+        st.markdown(
+            "**Как создавался PROMPTUS**\n\n"
+            "1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу\n"
+            "2. **Создание базы знаний** — текст из PDF извлечён, очищен и структурирован\n"
+            "3. **Разработка агента** — на базе Streamlit создан чат-интерфейс\n"
+            "4. **Добавление ИИ** — через GigaChat API (Сбер)\n\n"
+            "**Технологии:**\n"
+            "- 🐍 Python 3.10\n"
+            "- 🎨 Streamlit — интерфейс\n"
+            "- 🧠 SentenceTransformer (мультиязычная модель)\n"
+            "- 🗄️ Chroma DB — векторное хранилище\n"
+            "- 🌐 GigaChat API — переформулировка ответов\n\n"
+            f"**Версия:** {APP_VERSION}\n\n"
+            "**Контакты:** [dimaa@dimaa.ru](mailto:dimaa@dimaa.ru)"
+        )
