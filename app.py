@@ -13,14 +13,13 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.2.0"
 
 # ============================================
 # КОНФИГУРАЦИЯ (все настройки в одном месте)
 # ============================================
 
 # --- База знаний / эмбеддинги ---
-# Используем лёгкую модель для русского языка
 EMBED_MODEL = "all-MiniLM-L6-v2"
 DB_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
@@ -62,7 +61,7 @@ SYSTEM_PROMPT = (
 )
 
 # ============================================
-# 1. ЗАГРУЗКА МОДЕЛИ И БАЗЫ
+# 1. ЗАГРУЗКА МОДЕЛИ И БАЗЫ (С ОТЛАДКОЙ)
 # ============================================
 
 def _encode(model, texts):
@@ -164,34 +163,31 @@ def create_db_from_pdf(client, model):
 @st.cache_resource
 def load_models():
     """Загружает модель и подключается к базе Chroma."""
+    st.write("🔍 Загрузка модели...")
     model = SentenceTransformer(EMBED_MODEL)
+    st.write("✅ Модель загружена")
+    
+    st.write(f"🔍 Подключение к базе: {DB_PATH}")
     client = chromadb.PersistentClient(path=DB_PATH)
     
-    # Логирование для отладки
-    log = ""
-    log += f"DEBUG: DB_PATH = {DB_PATH}\n"
-    log += f"DEBUG: DB_PATH exists = {os.path.exists(DB_PATH)}\n"
-    
+    # Проверка наличия папки
     if os.path.exists(DB_PATH):
-        log += f"DEBUG: Contents of {DB_PATH}:\n"
-        try:
-            for item in os.listdir(DB_PATH):
-                log += f"  - {item}\n"
-        except Exception as e:
-            log += f"  ERROR reading dir: {e}\n"
+        st.write(f"✅ Папка {DB_PATH} существует")
+        for item in os.listdir(DB_PATH):
+            st.write(f"  - {item}")
     else:
-        log += f"DEBUG: {DB_PATH} does NOT exist\n"
+        st.write(f"❌ Папка {DB_PATH} НЕ существует")
+        return model, None
     
-    # Пробуем открыть готовую базу
+    # Попытка открыть коллекцию
     try:
+        st.write(f"🔍 Поиск коллекции: {COLLECTION_NAME}")
         collection = client.get_collection(COLLECTION_NAME)
         count = collection.count()
-        log += f"DEBUG: Collection '{COLLECTION_NAME}' found, count = {count}\n"
-        print(log)  # выводим в логи Streamlit Cloud
+        st.write(f"✅ Коллекция найдена, фрагментов: {count}")
         return model, collection
     except Exception as e:
-        log += f"ERROR: Collection '{COLLECTION_NAME}' not found: {e}\n"
-        print(log)
+        st.write(f"❌ Ошибка: {e}")
         return model, None
 
 model, collection = load_models()
@@ -201,7 +197,6 @@ model, collection = load_models()
 # ============================================
 
 def clean_chunk(doc):
-    """Убирает мусорные фрагменты."""
     doc = (doc or "").strip()
     if len(doc) < MIN_CHUNK_LENGTH:
         return ""
@@ -212,7 +207,6 @@ def clean_chunk(doc):
     return " ".join(doc.split()).replace("�", "")
 
 def get_answer(question, top_k=TOP_K):
-    """Ищет релевантные фрагменты и возвращает связный текст."""
     if collection is None:
         return "❌ База знаний не загружена."
 
@@ -252,7 +246,6 @@ def get_answer(question, top_k=TOP_K):
     return text
 
 def get_random_chunk():
-    """Случайный фрагмент из базы."""
     if collection is None or collection.count() == 0:
         return None, None, None
     offset = random.randrange(collection.count())
