@@ -11,7 +11,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 
 # ============================================
 # КОНФИГУРАЦИЯ GigaChat
@@ -29,13 +29,70 @@ COURSE_STRUCTURE = """
 СТРУКТУРА КУРСА ПО ПРОМПТ-ИНЖИНИРИНГУ
 
 Модуль 1. Основы Prompt engineering
-  - Введение в prompt engineering
-  - Ключевые навыки Prompt engineer
-  - Базовые методы prompt (Zero-shot, One-shot, Few-shot, Chain-of-Thought, Instruction-based, Role, Meta)
-  - Продвинутые методы (Self-consistency, Generated Knowledge, Prompt Chaining, Tree of Thoughts, Automatic Reasoning, RAG)
-  - Инструменты для создания prompts (чат-боты, Playground, IDE плагины, маркетплейсы)
-  - Генерация изображений и видео
-  - Оптимизация и безопасность prompts
+  Лекция 1.1: Введение в prompt engineering
+    - Что такое промпт-инжиниринг
+    - Основные понятия и термины
+    - Роль промпт-инженера
+  
+  Лекция 1.1.2: Ключевые навыки Prompt engineer
+    - Проектирование запросов
+    - Анализ и контроль качества ответов
+    - Интеграция и автоматизация
+    - Поддержка и обучение команды
+    - Исследования и эксперименты
+  
+  Лекция 1.2.1: Простые типы prompts
+    - Zero-shot prompting
+    - One-shot prompting
+    - Few-shot prompting
+    - Chain-of-Thought
+    - Instruction-based
+    - Role prompting
+    - Meta Prompting
+  
+  Лекция 1.2.2: Продвинутые типы prompts
+    - Self-consistency
+    - Generated Knowledge Prompting
+    - Prompt Chaining
+    - Tree of Thoughts
+    - Automatic Reasoning prompt
+    - Retrieval Augmented Generation (RAG)
+  
+  Лекция 1.3.1: Инструменты для создания prompts
+    - Чат-боты
+    - Playground
+    - IDE плагины
+    - Маркетплейсы prompt
+    - Библиотеки для интеграции LLM
+  
+  Лекция 1.3.2: Практика работы с Prompts инструментами
+    - YandexGPT Playground
+    - Анализ отзывов с Алисой
+  
+  Лекция 1.4.1: Генерация изображений
+    - Особенности генеративных моделей
+    - Влияние параметров
+    - Обзор инструментов (DALL-E, Midjourney, Stable Diffusion, Kandinsky)
+    - Ошибки и способы их избежать
+  
+  Лекция 1.4.2: Генерация видео и анализ изображений
+    - Обзор моделей для генерации видео
+    - Шедеврум от Яндекса
+    - Кандинский от Сбера
+    - Базовая структура промпта для видео
+    - Анализ изображений
+  
+  Лекция 1.5.1: Оптимизация prompts
+    - Метрики и цели оптимизации
+    - Приёмы оптимизации
+    - Инструменты для оптимизации
+    - A/B тестирование
+  
+  Лекция 1.5.2: Безопасность prompts
+    - Угрозы и риски (prompt injection, утечка данных)
+    - Типы атак
+    - Методы защиты
+    - Инструменты безопасности
 
 Модуль 2. Сферы применения Prompt engineering
   - Применение в бизнесе, маркетинге, образовании
@@ -43,8 +100,8 @@ COURSE_STRUCTURE = """
   - Рекламные кейсы
   - Этические аспекты
 
-Модуль 3. Интеграция приложений и Prompt engineering
-  - Встраивание LLM в продукты (чаты, поисковые системы, ассистенты)
+Модуль 3. Инtegration приложений и Prompt engineering
+  - Встраивание LLM в продукты
   - Работа с API (OpenAI, Anthropic, YandexGPT)
   - Библиотеки для интеграции (LangChain, Haystack, Llamaindex)
   - Автоматизация процессов
@@ -91,6 +148,24 @@ def create_db_from_pdf(model):
     all_chunks.append(COURSE_STRUCTURE)
     all_ids.append("course_structure")
     
+    # Добавляем отдельные фрагменты для быстрого поиска названий лекций
+    lecture_names = [
+        "Лекция 1: Введение в prompt engineering",
+        "Лекция 2: Ключевые навыки Prompt engineer",
+        "Лекция 3: Простые типы prompts",
+        "Лекция 4: Продвинутые типы prompts",
+        "Лекция 5: Инструменты для создания prompts",
+        "Лекция 6: Практика работы с Prompts инструментами",
+        "Лекция 7: Генерация изображений",
+        "Лекция 8: Генерация видео и анализ изображений",
+        "Лекция 9: Оптимизация prompts",
+        "Лекция 10: Безопасность prompts"
+    ]
+    
+    for name in lecture_names:
+        all_chunks.append(name)
+        all_ids.append(f"lecture_{name[:10]}")
+    
     pdf_files = list(Path("data").glob("**/*.pdf"))
 
     if not pdf_files:
@@ -128,7 +203,7 @@ model, collection, db_exists = load_models()
 # 2. ФУНКЦИЯ ПОЛУЧЕНИЯ ОТВЕТА (БАЗОВЫЙ ПОИСК)
 # ============================================
 
-def get_answer(question: str, max_chunks: int = 5) -> str:
+def get_answer(question: str, max_chunks: int = 10) -> str:
     """Ищет ответ в базе и возвращает связный текст"""
     if collection is None:
         return "❌ База знаний не загружена."
@@ -146,7 +221,7 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     for doc in results['documents'][0]:
         doc = doc.strip()
         # Пропускаем короткие фрагменты
-        if len(doc) < 100:
+        if len(doc) < 50:
             continue
         # Пропускаем оглавления и списки
         if doc.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.')) and '......' in doc:
@@ -156,9 +231,9 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
         clean_chunks.append(doc)
 
     if clean_chunks:
-        all_text = " ".join(clean_chunks)
+        all_text = " ".join(clean_chunks[:5])  # Берём первые 5 самых релевантных
     else:
-        all_text = " ".join(results['documents'][0])
+        all_text = " ".join(results['documents'][0][:3])
 
     clean_text = ' '.join(all_text.split())
     clean_text = clean_text.replace('�', '').replace('  ', ' ')
@@ -225,6 +300,7 @@ def get_answer_with_gigachat(question: str, raw_answer: str, temperature: float 
 Не выдумывай цифры, факты и названия, которых нет в тексте.
 Если спрашивают о структуре курса — перечисли модули из материалов.
 Если спрашивают о темах — перечисли конкретные темы из лекций.
+Если спрашивают о лекциях — назови их по номерам и темам.
 Структурируй ответ: используй списки и абзацы для удобства чтения.
 Будь полезным и дружелюбным."""},
                     {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw_answer}"}
