@@ -20,16 +20,16 @@ APP_VERSION = "2.1.0"
 # ============================================
 
 # --- База знаний / эмбеддинги ---
-# Используем мультиязычную модель для лучшего понимания русского языка
+# Используем лёгкую модель для русского языка
 EMBED_MODEL = "all-MiniLM-L6-v2"
 DB_PATH = "./chroma_db"
-COLLECTION_NAME = "course_knowledge_v2"  # v2: косинусная метрика + метаданные
-CHUNK_SIZE = 800          # Оптимальный размер для семантического поиска
-CHUNK_OVERLAP = 150       # Перекрытие для сохранения контекста
-TOP_K = 5                  # Сколько фрагментов искать по вопросу
-RELEVANCE_THRESHOLD = 0.75 # Косинусное расстояние (0..2): меньше = ближе
-CONTEXT_MAX_CHARS = 2400   # Максимум текста, передаваемого в GigaChat
-MIN_CHUNK_LENGTH = 100     # Минимальная длина фрагмента
+COLLECTION_NAME = "course_knowledge_v2"
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 150
+TOP_K = 5
+RELEVANCE_THRESHOLD = 0.75
+CONTEXT_MAX_CHARS = 2400
+MIN_CHUNK_LENGTH = 100
 DATA_DIR = "data"
 
 # --- GigaChat ---
@@ -42,7 +42,7 @@ GIGACHAT_MAX_TOKENS = 800
 GIGACHAT_TIMEOUT = 60
 DEFAULT_TEMPERATURE = 0.7
 
-# --- Память диалога (сколько последних реплик видит GigaChat) ---
+# --- Память диалога ---
 MAX_HISTORY = 6
 
 # --- Роль ассистента ---
@@ -61,44 +61,33 @@ SYSTEM_PROMPT = (
     "7. Не цитируй лекции дословно целиком — переформулируй своими словами."
 )
 
-
 # ============================================
 # 1. ЗАГРУЗКА МОДЕЛИ И БАЗЫ
 # ============================================
 
 def _encode(model, texts):
-    """Эмбеддинги с нормализацией (под косинусную метрику)."""
+    """Эмбеддинги с нормализацией."""
     return model.encode(texts, normalize_embeddings=True).tolist()
 
-
 def clean_text(text: str) -> str:
-    """Очистка текста от мусора (колонтитулы, номера страниц, битые символы)."""
+    """Очистка текста от мусора."""
     if not text:
         return ""
     import re
-    # Убираем колонтитулы
     text = re.sub(r"Промпт-инжиниринг\s*\d*", "", text)
     text = re.sub(r"Промпт-инжиниринг", "", text)
-    # Убираем номера страниц
     text = re.sub(r"\n\s*\d{1,3}\s*\n", "\n", text)
-    # Убираем лишние пробелы и переносы
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
-
 def split_by_headings(text: str) -> list:
-    """
-    Разбивает текст по заголовкам вида "1. Название", "2. Название" и т.д.
-    Возвращает список секций с заголовками и текстом.
-    """
+    """Разбивает текст по заголовкам вида '1. Название'."""
     import re
     pattern = re.compile(r"^(\d+)\.\s+([А-ЯA-Z][^\n]{2,80})$", re.MULTILINE)
     matches = list(pattern.finditer(text))
-    
     if not matches:
         return [{"title": "Документ целиком", "text": text}]
-    
     sections = []
     for i, match in enumerate(matches):
         start = match.start()
@@ -106,17 +95,14 @@ def split_by_headings(text: str) -> list:
         title = f"{match.group(1)}. {match.group(2)}"
         section_text = text[start:end].strip()
         sections.append({"title": title, "text": section_text})
-    
     return sections
 
-
 def create_db_from_pdf(client, model):
-    """Создаёт базу из PDF-файлов с структурным разбиением."""
+    """Создаёт базу из PDF-файлов."""
     collection = client.get_or_create_collection(
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
-
     pdf_files = list(Path(DATA_DIR).glob("**/*.pdf"))
     if not pdf_files:
         return None
@@ -131,14 +117,11 @@ def create_db_from_pdf(client, model):
         except Exception:
             continue
 
-        # 1. Разбиваем по заголовкам
         sections = split_by_headings(full_text)
-        
         for sec_idx, section in enumerate(sections):
             section_text = section["text"]
             section_title = section["title"]
             
-            # 2. Если секция короткая — добавляем целиком
             if len(section_text) <= CHUNK_SIZE + CHUNK_OVERLAP:
                 if len(section_text) >= MIN_CHUNK_LENGTH:
                     docs.append(section_text)
@@ -150,13 +133,11 @@ def create_db_from_pdf(client, model):
                     })
                 continue
             
-            # 3. Длинные секции режем на чанки с перекрытием
             start = 0
             chunk_idx = 0
             while start < len(section_text):
                 end = min(start + CHUNK_SIZE, len(section_text))
                 chunk = section_text[start:end].strip()
-                
                 if len(chunk) >= MIN_CHUNK_LENGTH:
                     docs.append(chunk)
                     ids.append(f"{pdf_path.stem}_{sec_idx}_{chunk_idx}")
@@ -166,7 +147,6 @@ def create_db_from_pdf(client, model):
                         "chunk": chunk_idx
                     })
                     chunk_idx += 1
-                
                 start = end - CHUNK_OVERLAP
                 if start >= len(section_text):
                     break
@@ -181,36 +161,47 @@ def create_db_from_pdf(client, model):
         return collection
     return None
 
-
 @st.cache_resource
 def load_models():
-    """Загружает модель и подключается к базе Chroma (или строит её заново)."""
+    """Загружает модель и подключается к базе Chroma."""
     model = SentenceTransformer(EMBED_MODEL)
     client = chromadb.PersistentClient(path=DB_PATH)
-
+    
+    # Логирование для отладки
+    log = ""
+    log += f"DEBUG: DB_PATH = {DB_PATH}\n"
+    log += f"DEBUG: DB_PATH exists = {os.path.exists(DB_PATH)}\n"
+    
+    if os.path.exists(DB_PATH):
+        log += f"DEBUG: Contents of {DB_PATH}:\n"
+        try:
+            for item in os.listdir(DB_PATH):
+                log += f"  - {item}\n"
+        except Exception as e:
+            log += f"  ERROR reading dir: {e}\n"
+    else:
+        log += f"DEBUG: {DB_PATH} does NOT exist\n"
+    
     # Пробуем открыть готовую базу
     try:
         collection = client.get_collection(COLLECTION_NAME)
-        if collection.count() > 0:
-            return model, collection
-    except Exception:
-        pass
-
-    # Базы нет или она пустая — строим из PDF
-    if os.path.exists(DATA_DIR):
-        return model, None 
-    
-
+        count = collection.count()
+        log += f"DEBUG: Collection '{COLLECTION_NAME}' found, count = {count}\n"
+        print(log)  # выводим в логи Streamlit Cloud
+        return model, collection
+    except Exception as e:
+        log += f"ERROR: Collection '{COLLECTION_NAME}' not found: {e}\n"
+        print(log)
+        return model, None
 
 model, collection = load_models()
 
-
 # ============================================
-# 2. ПОИСК ПО БАЗЕ (RAG без генерации)
+# 2. ПОИСК ПО БАЗЕ
 # ============================================
 
 def clean_chunk(doc):
-    """Убирает мусорные фрагменты: оглавления, короткие куски, битые символы."""
+    """Убирает мусорные фрагменты."""
     doc = (doc or "").strip()
     if len(doc) < MIN_CHUNK_LENGTH:
         return ""
@@ -219,7 +210,6 @@ def clean_chunk(doc):
     if "Оглавление" in doc or "Table of Contents" in doc:
         return ""
     return " ".join(doc.split()).replace("�", "")
-
 
 def get_answer(question, top_k=TOP_K):
     """Ищет релевантные фрагменты и возвращает связный текст."""
@@ -235,7 +225,6 @@ def get_answer(question, top_k=TOP_K):
     if not results or not results.get("documents") or not results["documents"][0]:
         return "❌ В материалах курса не нашлось ответа."
 
-    # Берём только чистые и достаточно близкие фрагменты
     chunks = []
     sources = []
     for doc, dist, meta in zip(
@@ -252,36 +241,31 @@ def get_answer(question, top_k=TOP_K):
     if not chunks:
         return "❌ В материалах курса не нашлось ответа на этот вопрос."
 
-    # Собираем контекст
     text = " ".join(chunks[:3])
     if len(text) > CONTEXT_MAX_CHARS:
         text = text[:CONTEXT_MAX_CHARS] + "..."
     
-    # Добавляем источники
     if sources:
         unique_sources = list(dict.fromkeys(sources))
         text += f"\n\n📎 Источники: {', '.join(unique_sources[:3])}"
     
     return text
 
-
 def get_random_chunk():
     """Случайный фрагмент из базы."""
     if collection is None or collection.count() == 0:
-        return None, None
+        return None, None, None
     offset = random.randrange(collection.count())
     res = collection.get(limit=1, offset=offset, include=["documents", "metadatas"])
     if res and res.get("ids") and res.get("documents"):
         return res["ids"][0], res["documents"][0], res["metadatas"][0] if res.get("metadatas") else None
     return None, None, None
 
-
 # ============================================
 # 3. РАБОТА С GigaChat
 # ============================================
 
 _token_cache = {"value": None, "expires_at": 0.0}
-
 
 def get_gigachat_token():
     if _token_cache["value"] and time.time() < _token_cache["expires_at"]:
@@ -314,7 +298,6 @@ def get_gigachat_token():
         pass
     return None
 
-
 def _gigachat_request(messages, temperature):
     token = get_gigachat_token()
     if not token:
@@ -343,7 +326,6 @@ def _gigachat_request(messages, temperature):
     except Exception as e:
         return None, str(e)
 
-
 def get_answer_with_gigachat(question, raw_answer, history, temperature):
     if raw_answer.startswith("❌"):
         return raw_answer
@@ -358,7 +340,6 @@ def get_answer_with_gigachat(question, raw_answer, history, temperature):
     if status == "no_token":
         return f"{raw_answer}\n\n⚠️ *Не удалось получить токен GigaChat.*"
     return f"{raw_answer}\n\n⚠️ *Ошибка GigaChat: {status}*"
-
 
 def test_gigachat():
     result = {"token_status": False, "token_message": "", "api_status": False,
@@ -386,7 +367,6 @@ def test_gigachat():
         result["api_message"] = f"❌ Ошибка: {status}"
     return result
 
-
 # ============================================
 # 4. СПИСОК ЛЕКЦИЙ ИЗ БАЗЫ
 # ============================================
@@ -408,7 +388,6 @@ def get_lecture_list_from_db():
     except Exception:
         return []
 
-
 # ============================================
 # 5. ИНТЕРФЕЙС
 # ============================================
@@ -417,20 +396,6 @@ st.set_page_config(
     page_title="PROMPTUS — Ментор по промпт-инжинирингу",
     page_icon="🧠",
     layout="wide",
-)
-
-st.markdown(
-    """
-    <style>
-        div[data-testid="stChatMessage"] {
-            border-radius: 16px;
-            border: 1px solid rgba(108, 92, 231, 0.12);
-        }
-        .stButton > button { border-radius: 12px; }
-        h1, h2, h3 { letter-spacing: -0.01em; }
-    </style>
-    """,
-    unsafe_allow_html=True,
 )
 
 # ============================================
@@ -744,7 +709,6 @@ elif mode == "ℹ️ О PROMPTUS":
         f"                                        ▼\n"
         f"┌─────────────────────────────────────────────────────────────────────────────┐\n"
         f"│  2. Создание эмбеддингов (SentenceTransformer)                             │\n"
-        f"│     └─> Мультиязычная модель для русского языка                          │\n"
         f"│     └─> Каждый фрагмент превращён в вектор чисел                          │\n"
         f"│     └─> Векторы сохранены в Chroma DB (косинусная метрика)                │\n"
         f"└─────────────────────────────────────────────────────────────────────────────┘\n"
@@ -789,54 +753,3 @@ elif mode == "ℹ️ О PROMPTUS":
         "Приложение задеплоено на `share.streamlit.io`.\n\n"
         "---\n\n"
         "**Шаг 7: Тестирование и доработка**\n\n"
-        "Добавлены режимы, ползунок температуры, инструкция для новичков, структурная база."
-    )
-
-    st.subheader("🔗 Проекты, которые учитываются")
-
-    if collection:
-        st.info(f"📚 В базе знаний **{collection.count()}** фрагментов из следующих PDF-лекций:")
-
-        pdf_files = sorted(list(Path(DATA_DIR).glob("**/*.pdf")))
-        if pdf_files:
-            for pdf in pdf_files:
-                st.write(f"- `{pdf.name}`")
-        else:
-            st.write("- PDF-файлы не найдены")
-    else:
-        st.warning(f"⚠️ База знаний не загружена. Проверьте папку `{DATA_DIR}/`.")
-
-    st.divider()
-    st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
-
-# ============================================
-# 11. ФУТЕР
-# ============================================
-
-if mode == "🛠 Отладка":
-    st.divider()
-
-    col1, col2, col3 = st.columns([2, 1, 2])
-    with col2:
-        st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
-    with col1:
-        st.caption("📚 Материалы: PDF-лекции по промпт-инжинирингу")
-    with col3:
-        st.caption("🔗 [Исходный код на GitHub](https://github.com/Dmirii/ai-mentor-course)")
-
-    with st.expander("ℹ️ О проекте", expanded=False):
-        st.markdown(
-            "**Как создавался PROMPTUS**\n\n"
-            "1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу\n"
-            "2. **Создание базы знаний** — текст из PDF извлечён, очищен и структурирован\n"
-            "3. **Разработка агента** — на базе Streamlit создан чат-интерфейс\n"
-            "4. **Добавление ИИ** — через GigaChat API (Сбер)\n\n"
-            "**Технологии:**\n"
-            "- 🐍 Python 3.10\n"
-            "- 🎨 Streamlit — интерфейс\n"
-            "- 🧠 SentenceTransformer (мультиязычная модель)\n"
-            "- 🗄️ Chroma DB — векторное хранилище\n"
-            "- 🌐 GigaChat API — переформулировка ответов\n\n"
-            f"**Версия:** {APP_VERSION}\n\n"
-            "**Контакты:** [dimaa@dimaa.ru](mailto:dimaa@dimaa.ru)"
-        )
