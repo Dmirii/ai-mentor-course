@@ -11,7 +11,7 @@ from pypdf import PdfReader
 # ============================================
 # ВЕРСИЯ ПРИЛОЖЕНИЯ
 # ============================================
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 
 # ============================================
 # КОНФИГУРАЦИЯ GigaChat
@@ -20,9 +20,10 @@ GIGACHAT_CREDENTIALS = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OmM2ODQ5
 GIGACHAT_SCOPE = "GIGACHAT_API_PERS"
 GIGACHAT_TOKEN_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 GIGACHAT_API_URL = "https://api.giga.chat/v1/chat/completions"
+GIGACHAT_MODEL = "GigaChat-2-Max"
 
 # ============================================
-# 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ
+# 1. ЗАГРУЗКА БАЗЫ И МОДЕЛИ (без сообщений)
 # ============================================
 
 @st.cache_resource
@@ -40,10 +41,8 @@ def load_models():
             pass
 
     if os.path.exists("data"):
-        st.info("📚 Создаю базу знаний из PDF...")
         return model, create_db_from_pdf(model), False
     else:
-        st.error("❌ Папка 'data' не найдена. Загрузите PDF-файлы.")
         return model, None, False
 
 def create_db_from_pdf(model):
@@ -56,7 +55,6 @@ def create_db_from_pdf(model):
     pdf_files = list(Path("data").glob("**/*.pdf"))
 
     if not pdf_files:
-        st.error("❌ В папке 'data' нет PDF-файлов.")
         return None
 
     for pdf_path in pdf_files:
@@ -72,7 +70,7 @@ def create_db_from_pdf(model):
                     all_chunks.append(chunk)
                     all_ids.append(f"{pdf_path.stem}_{i}")
         except Exception as e:
-            st.warning(f"⚠️ Ошибка чтения {pdf_path.name}: {e}")
+            pass
 
     if all_chunks:
         embeddings = model.encode(all_chunks).tolist()
@@ -81,10 +79,8 @@ def create_db_from_pdf(model):
             embeddings=embeddings,
             ids=all_ids
         )
-        st.success(f"✅ Загружено {len(all_chunks)} фрагментов")
         return collection
     else:
-        st.error("❌ Не удалось извлечь текст из PDF.")
         return None
 
 model, collection, db_exists = load_models()
@@ -94,9 +90,9 @@ model, collection, db_exists = load_models()
 # ============================================
 
 def get_answer(question: str, max_chunks: int = 5) -> str:
-    """Ищет ответ в базе и возвращает связный текст без переформулировки"""
+    """Ищет ответ в базе и возвращает связный текст"""
     if collection is None:
-        return "❌ База знаний не загружена. Проверьте папку data/."
+        return "❌ База знаний не загружена."
 
     question_vector = model.encode([question]).tolist()
     results = collection.query(
@@ -105,9 +101,8 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     )
 
     if not results or not results['documents'] or not results['documents'][0]:
-        return "❌ В материалах курса не нашлось ответа на ваш вопрос."
+        return "❌ В материалах курса не нашлось ответа."
 
-    # Очистка от мусора
     clean_chunks = []
     for doc in results['documents'][0]:
         doc = doc.strip()
@@ -128,7 +123,7 @@ def get_answer(question: str, max_chunks: int = 5) -> str:
     clean_text = clean_text.replace('�', '').replace('  ', ' ')
 
     if len(clean_text) < 50:
-        return "❌ Найден только короткий фрагмент. Попробуйте переформулировать вопрос."
+        return "❌ Найден только короткий фрагмент."
 
     if len(clean_text) > 800:
         clean_text = clean_text[:800] + "..."
@@ -162,15 +157,14 @@ def get_gigachat_token() -> str:
     except Exception as e:
         return None
 
-def get_answer_with_gigachat(question: str) -> str:
+def get_answer_with_gigachat(question: str, raw_answer: str, temperature: float = 0.7) -> str:
     """Переформулирует ответ через GigaChat API"""
-    raw = get_answer(question)
-    if raw.startswith("❌"):
-        return raw
+    if raw_answer.startswith("❌"):
+        return raw_answer
     
     token = get_gigachat_token()
     if not token:
-        return f"{raw}\n\n⚠️ *Не удалось получить токен GigaChat. Проверьте ключ.*"
+        return f"{raw_answer}\n\n⚠️ *Не удалось получить токен GigaChat.*"
     
     try:
         response = requests.post(
@@ -180,12 +174,12 @@ def get_answer_with_gigachat(question: str) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "GigaChat-2-Max",
+                "model": GIGACHAT_MODEL,
                 "messages": [
                     {"role": "system", "content": "Ты — ментор PROMPTUS. Переформулируй ответ для студента простым и понятным языком. Сохрани все ключевые факты. Отвечай только на русском языке."},
-                    {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw}"}
+                    {"role": "user", "content": f"Вопрос: {question}\n\nТекст из лекций: {raw_answer}"}
                 ],
-                "temperature": 0.7,
+                "temperature": temperature,
                 "max_tokens": 300
             },
             timeout=60,
@@ -196,13 +190,9 @@ def get_answer_with_gigachat(question: str) -> str:
             data = response.json()
             return data["choices"][0]["message"]["content"]
         else:
-            return f"{raw}\n\n⚠️ *Ошибка GigaChat: {response.status_code}*"
+            return f"{raw_answer}\n\n⚠️ *Ошибка GigaChat: {response.status_code}*"
     except Exception as e:
-        return f"{raw}\n\n⚠️ *Ошибка при обращении к GigaChat: {str(e)}*"
-
-# ============================================
-# 4. ФУНКЦИЯ ДЛЯ ОТЛАДКИ GigaChat
-# ============================================
+        return f"{raw_answer}\n\n⚠️ *Ошибка при обращении к GigaChat: {str(e)}*"
 
 def test_gigachat() -> dict:
     """Тестирует подключение к GigaChat и возвращает результат"""
@@ -214,16 +204,14 @@ def test_gigachat() -> dict:
         "response": ""
     }
     
-    # 1. Проверяем получение токена
     token = get_gigachat_token()
     if token:
         result["token_status"] = True
-        result["token_message"] = "✅ Токен получен (первые 20 символов: " + token[:20] + "...)"
+        result["token_message"] = "✅ Токен получен"
     else:
-        result["token_message"] = "❌ Не удалось получить токен. Проверь ключ и интернет."
+        result["token_message"] = "❌ Не удалось получить токен."
         return result
     
-    # 2. Проверяем API запрос
     try:
         test_response = requests.post(
             GIGACHAT_API_URL,
@@ -232,7 +220,7 @@ def test_gigachat() -> dict:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "GigaChat-2-Max",
+                "model": GIGACHAT_MODEL,
                 "messages": [
                     {"role": "system", "content": "Ты — полезный ассистент."},
                     {"role": "user", "content": "Напиши одно предложение о нейросетях."}
@@ -256,7 +244,7 @@ def test_gigachat() -> dict:
     return result
 
 # ============================================
-# 5. ИНТЕРФЕЙС ПОЛЬЗОВАТЕЛЯ
+# 4. ИНТЕРФЕЙС
 # ============================================
 
 st.set_page_config(
@@ -266,7 +254,7 @@ st.set_page_config(
 )
 
 # ============================================
-# 6. БОКОВОЕ МЕНЮ
+# 5. БОКОВОЕ МЕНЮ
 # ============================================
 
 with st.sidebar:
@@ -276,81 +264,62 @@ with st.sidebar:
 
     mode = st.radio(
         "📚 Режимы",
-        ["📚 Обучение", "🧠 Синтез с ИИ", "🛠 Отладка"],
+        ["🧠 Синтез с ИИ", "📝 Тестирование", "🛠 Отладка"],
         index=0
     )
     st.divider()
 
+    if mode == "🧠 Синтез с ИИ":
+        temperature = st.slider(
+            "🌡️ Температура",
+            min_value=0.1,
+            max_value=0.9,
+            value=0.7,
+            step=0.1,
+            help="0.1 — строгие ответы, 0.9 — креативные"
+        )
+        st.divider()
+
     chunks_count = collection.count() if collection else 0
     st.caption(f"📊 В базе: {chunks_count} фрагментов")
-    
     st.divider()
 
-    with st.expander("ℹ️ О PROMPTUS"):
+    with st.expander("📖 Как пользоваться PROMPTUS", expanded=False):
         st.markdown("""
-        **PROMPTUS** — ментор по промпт-инжинирингу.
-        
-        **Режимы:**
-        - 📚 **Обучение** — поиск по базе
-        - 🧠 **Синтез с ИИ** — переформулировка через GigaChat
+        **1. Выбери режим:**
+        - 🧠 **Синтез с ИИ** — задавай вопросы, получай переформулированные ответы
+        - 📝 **Тестирование** — проверь свои знания
         - 🛠 **Отладка** — проверка базы и GigaChat
+
+        **2. Настрой температуру** (в режиме Синтез):
+        - 0.1 — точные, строгие ответы
+        - 0.7 — сбалансированные
+        - 0.9 — креативные, нестандартные
+
+        **3. Задавай вопросы** по курсу промпт-инжиниринга.
+        """)
+
+    with st.expander("ℹ️ О PROMPTUS", expanded=False):
+        st.markdown(f"""
+        **PROMPTUS** — ментор по промпт-инжинирингу.
         
         **Технологии:**
         - 🧠 SentenceTransformer (all-MiniLM-L6-v2)
         - 🗄️ Chroma DB
         - 🌐 GigaChat API (Сбер)
+
+        **Версия:** {APP_VERSION}
+        
+        **Контакты:** [dimaa@dimaa.ru](mailto:dimaa@dimaa.ru)
         """)
 
 # ============================================
-# 7. РЕЖИМ: ОБУЧЕНИЕ
+# 6. РЕЖИМ: СИНТЕЗ С ИИ
 # ============================================
 
-if mode == "📚 Обучение":
-    st.title("📚 Обучение с PROMPTUS")
-    st.caption(f"Версия: {APP_VERSION} | В базе: {collection.count() if collection else 0} фрагментов")
-    
-    if "messages" not in st.session_state:
-        chunks_count = collection.count() if collection else 0
-        st.session_state.messages = [
-            {"role": "assistant", "content": f"""👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.
-
-📚 В базе знаний **{chunks_count}** фрагментов из лекций.
-🎯 Текущий режим: **Поиск по базе**
-
-Задавай вопросы по курсу, и я найду ответ в материалах."""}
-        ]
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    user_input = st.chat_input("Задайте вопрос по курсу промпт-инжиниринга...")
-
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        with st.chat_message("assistant"):
-            with st.spinner("🔍 Ищу ответ в лекциях..."):
-                answer = get_answer(user_input)
-                response = f"""**📖 Ответ ментора (из лекций):**
-
-{answer}
-
----
-💡 *Источник: материалы курса по промпт-инжинирингу.*
-"""
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-
-# ============================================
-# 8. РЕЖИМ: СИНТЕЗ С ИИ
-# ============================================
-
-elif mode == "🧠 Синтез с ИИ":
+if mode == "🧠 Синтез с ИИ":
     st.title("🧠 Синтез с ИИ (GigaChat)")
-    st.caption(f"Версия: {APP_VERSION} | Модель: GigaChat-2-Max")
+    st.caption(f"Модель: GigaChat-2-Max | Температура: {temperature}")
     
     if "messages_gigachat" not in st.session_state:
         chunks_count = collection.count() if collection else 0
@@ -375,8 +344,9 @@ elif mode == "🧠 Синтез с ИИ":
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("🔍 Ищу ответ и переформулирую через GigaChat..."):
-                answer = get_answer_with_gigachat(user_input)
+            with st.spinner("🔍 Ищу ответ и переформулирую..."):
+                raw_answer = get_answer(user_input)
+                answer = get_answer_with_gigachat(user_input, raw_answer, temperature)
                 response = f"""**📖 Ответ ментора (переформулированный GigaChat):**
 
 {answer}
@@ -388,12 +358,80 @@ elif mode == "🧠 Синтез с ИИ":
                 st.session_state.messages_gigachat.append({"role": "assistant", "content": response})
 
 # ============================================
-# 9. РЕЖИМ: ОТЛАДКА
+# 7. РЕЖИМ: ТЕСТИРОВАНИЕ
+# ============================================
+
+elif mode == "📝 Тестирование":
+    st.title("📝 Тестирование знаний")
+    st.caption("Отвечай на вопросы по курсу. PROMPTUS проверит твои ответы.")
+    
+    if "test_messages" not in st.session_state:
+        st.session_state.test_messages = [
+            {"role": "assistant", "content": "👋 Привет! Я PROMPTUS — твой экзаменатор.\n\nНажми **'🎲 Получить вопрос'**, чтобы начать тестирование."}
+        ]
+
+    for msg in st.session_state.test_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("🎲 Получить вопрос"):
+            all_data = collection.get()
+            if all_data and 'ids' in all_data and len(all_data['ids']) > 0:
+                random_id = random.choice(all_data['ids'])
+                result = collection.get(ids=[random_id])
+                if result and 'documents' in result:
+                    chunk_text = result['documents'][0]
+                    st.session_state['current_question'] = chunk_text
+                    st.session_state['current_id'] = random_id
+                    st.session_state['test_answer_given'] = False
+                    st.session_state['test_result'] = None
+                    
+                    st.session_state.test_messages.append(
+                        {"role": "assistant", "content": f"📌 **Вопрос:** Перескажи этот фрагмент своими словами:\n\n> {chunk_text}"}
+                    )
+                    st.rerun()
+
+    if 'current_question' in st.session_state and not st.session_state.get('test_answer_given', True):
+        student_answer = st.text_area("✍️ Твой ответ:", height=100, key="test_answer")
+        
+        if st.button("✅ Проверить ответ"):
+            if len(student_answer.split()) < 10:
+                st.warning("❌ Ответ слишком короткий. Попробуй развернуто (минимум 10 слов).")
+            else:
+                ans_vector = model.encode([student_answer]).tolist()
+                similar = collection.query(
+                    query_embeddings=ans_vector,
+                    n_results=1
+                )
+                
+                if similar and similar['ids'] and similar['ids'][0][0] == st.session_state['current_id']:
+                    result_text = "🌟 Отлично! Твой ответ близок к оригиналу. Ты понял тему!"
+                    st.success(result_text)
+                else:
+                    result_text = "📖 Хорошая попытка! Вот оригинал для сравнения:\n\n" + st.session_state['current_question']
+                    st.info(result_text)
+                
+                st.session_state.test_messages.append({"role": "assistant", "content": result_text})
+                st.session_state['test_answer_given'] = True
+                st.rerun()
+    else:
+        if 'current_question' in st.session_state and not st.session_state.get('test_answer_given', True):
+            st.info("👆 Напиши ответ в поле выше и нажми 'Проверить ответ'.")
+
+# ============================================
+# 8. РЕЖИМ: ОТЛАДКА
 # ============================================
 
 elif mode == "🛠 Отладка":
     st.title("🛠 Отладка")
     st.caption(f"Версия: {APP_VERSION}")
+    
+    if collection:
+        st.success(f"✅ База знаний загружена ({collection.count()} фрагментов)")
+    else:
+        st.error("❌ База знаний не загружена.")
     
     tab1, tab2 = st.tabs(["🔍 Проверка базы", "🧠 Проверка GigaChat"])
     
@@ -496,38 +534,37 @@ elif mode == "🛠 Отладка":
                 st.warning("⚠️ Проверьте ключ и интернет-соединение.")
 
 # ============================================
-# 10. ФУТЕР
+# 9. ФУТЕР (только для Отладки и Тестирования)
 # ============================================
 
-st.divider()
+if mode in ["📝 Тестирование", "🛠 Отладка"]:
+    st.divider()
+    
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
+    with col1:
+        st.caption("📚 Материалы: PDF-лекции по промпт-инжинирингу")
+    with col3:
+        st.caption("🔗 [Исходный код на GitHub](https://github.com/Dmirii/ai-mentor-course)")
+    
+    with st.expander("ℹ️ О проекте", expanded=False):
+        st.markdown(f"""
+        **Как создавался PROMPTUS**
 
-col1, col2, col3 = st.columns([2, 1, 2])
-with col2:
-    st.caption(f"🧠 PROMPTUS v{APP_VERSION}")
-with col1:
-    st.caption("📚 Материалы: PDF-лекции по промпт-инжинирингу")
-with col3:
-    st.caption("🔗 [Исходный код на GitHub](https://github.com/Dmirii/ai-mentor-course)")
+        1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
+        2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
+        3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
+        4. **Добавление ИИ** — через GigaChat API (Сбер)
 
-with st.expander("ℹ️ О проекте", expanded=False):
-    st.markdown(f"""
-    **Как создавался PROMPTUS**
+        **Технологии:**
+        - 🐍 Python 3.10
+        - 🎨 Streamlit — интерфейс
+        - 🧠 SentenceTransformer — эмбеддинги
+        - 🗄️ Chroma DB — векторное хранилище
+        - 🌐 GigaChat API — переформулировка ответов
 
-    1. **Сбор материалов** — PDF-лекции по промпт-инжинирингу
-    2. **Создание базы знаний** — текст из PDF извлечён, разбит на фрагменты и превращён в векторы
-    3. **Разработка агента** — на базе Streamlit создан чат-интерфейс
-    4. **Добавление ИИ** — через GigaChat API (Сбер)
+        **Версия:** {APP_VERSION}
 
-    **Технологии:**
-    - 🐍 Python 3.10
-    - 🎨 Streamlit — интерфейс
-    - 🧠 SentenceTransformer — эмбеддинги
-    - 🗄️ Chroma DB — векторное хранилище
-    - 🌐 GigaChat API — переформулировка ответов
-
-    **Версия:** {APP_VERSION}
-
-    **Контакты:** [dimaa@dimaa.ru](mailto:dimaa@dimaa.ru)
-    """)
-
-st.caption("© 2026 PROMPTUS — учебный ИИ-агент для курса по нейросетям")
+        **Контакты:** [dimaa@dimaa.ru](mailto:dimaa@dimaa.ru)
+        """)
