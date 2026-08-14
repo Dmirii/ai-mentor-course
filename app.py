@@ -19,8 +19,9 @@ except ImportError:
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 CHROMA_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
+APP_VERSION = "v2.2.1"
 
-# Встроенный ключ авторизации GigaChat (Base64)
+# Встроенный дефолтный ключ авторизации GigaChat (Base64)
 DEFAULT_GIGACHAT_KEY = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OjY1OWQ1MTVhLTEzNmMtNGUyNS05ZDlmLWIzMWU1MmY1OGU2ZQ=="
 
 # Кэшируем модель эмбеддингов
@@ -196,7 +197,7 @@ class CourseKnowledgeBase:
 # ============================================
 
 class PromptusAgent:
-    """Агент PROMPTUS v2.2 — Ментор по промпт-инжинирингу."""
+    """Агент PROMPTUS — Ментор по промпт-инжинирингу."""
 
     def __init__(self, mode: str = "synthesis", llm_provider: Optional[Any] = None):
         self.mode = mode.lower()
@@ -246,7 +247,7 @@ class PromptusAgent:
             if kb_available:
                 return (
                     f"Привет! База знаний и система работают в штатном режиме.\n\n"
-                    f"📊 **Текущий статус:**\n"
+                    f"📊 **Текущий статус PROMPTUS ({APP_VERSION}):**\n"
                     f"• ИИ-синтез (GigaChat): **{gigachat_status}**\n"
                     f"• Уникальных лекций в базе: **{lecture_count if lecture_count > 0 else 29}** шт.\n"
                     f"• Заиндексировано фрагментов: **{chunk_count}** шт.\n\n"
@@ -347,7 +348,7 @@ def main():
     # 1. Боковая панель (Sidebar)
     with st.sidebar:
         st.title("🧠 PROMPTUS")
-        st.caption("v2.2.0")
+        st.caption(f"Версия {APP_VERSION}")
         st.divider()
 
         st.subheader("📚 Режимы")
@@ -377,6 +378,29 @@ def main():
                 "• **Отладка:** Выводит подробную системную диагностику базы и векторов."
             )
 
+        # КРАСИВЫЙ РАЗДЕЛ "О СОЗДАНИИ PROMPTUS И ПРОЕКТЕ"
+        with st.expander("ℹ️ О создании PROMPTUS и проекте", expanded=False):
+            st.markdown(
+                f"### 🚀 О проекте PROMPTUS ({APP_VERSION})\n\n"
+                "**PROMPTUS** — это интерактивный ИИ-ментор, созданный для интеллектуального поиска "
+                "и обучения по материалам курса промпт-инжиниринга с использованием архитектуры **RAG (Retrieval-Augmented Generation)**.\n\n"
+                "---"
+                "#### 🛠️ Стек технологий и сервисы:\n"
+                "• **Streamlit Cloud** — веб-интерфейс и хостинг приложения.\n"
+                "• **Сбер GigaChat API (GigaChat-2-Max)** — нейросетевая модель для синтеза обучающих ответов.\n"
+                "• **ChromaDB (Persistent Vector DB)** — векторная база данных (29 PDF-лекций, 386 фрагментов).\n"
+                "• **SentenceTransformers** (`paraphrase-multilingual-MiniLM-L12-v2`) — модель мультиязычных эмбеддингов.\n"
+                "• **PyPDF** — извлечение текста и заголовков непосредственно из PDF-файлов.\n\n"
+                "---"
+                "#### 🔗 Ссылки и репозиторий:\n"
+                "• 🐙 **GitHub репозиторий:** [ai-mentor-course](https://github.com/dmirii/ai-mentor-course)\n"
+                "• 🌐 **Живой сервис:** [ai-mentor-course.streamlit.app](https://ai-mentor-course.streamlit.app/)\n\n"
+                "---"
+                "#### 👤 Автор и разработчик:\n"
+                "Курс и разработка системы PROMPTUS.\n"
+                "Все права защищены © 2026."
+            )
+
         # Поиск API ключа GigaChat (с приоритетом: Secrets -> Env -> Default Key)
         gigachat_key = (
             st.secrets.get("GIGACHAT_CREDENTIALS") or 
@@ -394,7 +418,7 @@ def main():
 
         scope = st.secrets.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
 
-    # 2. Инициализация провайдера GigaChat с переданным ключом
+    # 2. Инициализация провайдера GigaChat
     llm_provider = None
     if "Синтез" in mode and GIGACHAT_AVAILABLE:
         llm_provider = GigaChatMentorProvider(
@@ -412,9 +436,9 @@ def main():
 
     agent = PromptusAgent(mode=agent_mode, llm_provider=llm_provider)
 
-    # 3. Диагностика в режиме "Отладка" (включая проверку статуса GigaChat)
+    # 3. Диагностика в режиме "Отладка"
     if agent_mode == "debug":
-        st.info("🔍 **Режим отладки (Debug Mode):**")
+        st.info(f"🔍 **Режим отладки (Debug Mode — PROMPTUS {APP_VERSION}):**")
         col1, col2 = st.columns(2)
         with col1:
             st.code(f"🔍 Модель эмбеддингов: {EMBEDDING_MODEL_NAME}")
@@ -424,21 +448,20 @@ def main():
             st.code(f"🔍 Статус GigaChat: {'Включен' if llm_provider else 'Отключен'}")
             st.code(f"🔍 Область (Scope): {scope}")
             
-            # Проверка живого подключения к GigaChat
             if llm_provider:
                 is_connected, msg = llm_provider.test_connection()
                 st.code(f"🔍 Проверка GigaChat: {msg}")
 
     # 4. Основное окно чата
     st.title("🧠 PROMPTUS")
-    st.caption("Ваш персональный ментор по промпт-инжинирингу")
+    st.caption(f"Ваш персональный ментор по промпт-инжинирингу ({APP_VERSION})")
 
     if "messages" not in st.session_state:
         st.session_state.messages = [
             {
                 "role": "assistant",
                 "content": (
-                    "👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.\n\n"
+                    f"👋 Привет! Я PROMPTUS ({APP_VERSION}) — ментор по промпт-инжинирингу.\n\n"
                     f"🧠 **Текущий режим:** {mode} | 📚 В базе знаний {chunk_count} фрагментов из лекций.\n\n"
                     "Задавай вопросы по курсу, и я найду ответ и переформулирую его!"
                 )
