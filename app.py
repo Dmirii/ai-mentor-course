@@ -21,8 +21,11 @@ CHROMA_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
 APP_VERSION = "v2.3.0"
 
-# Встроенный ключ авторизации GigaChat (Base64)
+# Авторизационные данные Сбер GigaChat API (Физлица / GIGACHAT_API_PERS)
+# Client ID: 019ff78f-c1d7-7959-8788-f4c53c7be3c7
 DEFAULT_GIGACHAT_KEY = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OjY1OWQ1MTVhLTEzNmMtNGUyNS05ZDlmLWIzMWU1MmY1OGU2ZQ=="
+DEFAULT_GIGACHAT_SCOPE = "GIGACHAT_API_PERS"
+DEFAULT_GIGACHAT_MODEL = "GigaChat"
 
 # Кэшируем модель эмбеддингов
 @st.cache_resource(show_spinner=False)
@@ -34,58 +37,70 @@ def get_embedding_model():
 # ============================================
 
 class GigaChatMentorProvider:
-    """Провайдер GigaChat с автоподключением и встроенным ключом."""
+    """Провайдер GigaChat с автоподключением по ключу физлица (GIGACHAT_API_PERS)."""
     
-    def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat-2-Max", temperature: float = 0.7, scope: str = "GIGACHAT_API_PERS"):
+    def __init__(self, credentials: Optional[str] = None, model_name: str = DEFAULT_GIGACHAT_MODEL, temperature: float = 0.7, scope: str = DEFAULT_GIGACHAT_SCOPE):
         self.credentials = credentials or DEFAULT_GIGACHAT_KEY
         self.model_name = model_name
         self.temperature = temperature
-        self.scope = scope
+        self.scope = scope or DEFAULT_GIGACHAT_SCOPE
 
     def test_connection(self) -> Tuple[bool, str]:
-        """Проверка живого соединения с GigaChat API."""
+        """Проверка соединения с GigaChat API."""
         if not GIGACHAT_AVAILABLE:
             return False, "Библиотека 'gigachat' не установлена в Python окружении."
         
-        try:
-            with GigaChat(credentials=self.credentials, verify_ssl_certs=False, scope=self.scope) as giga:
-                response = giga.chat({"model": self.model_name, "messages": [{"role": "user", "content": "ping"}]})
-                if response and response.choices:
-                    return True, f"✅ Подключено успешно! Модель '{self.model_name}' ответила на запрос."
-        except Exception as e:
-            return False, f"❌ Ошибка соединения (401 / Unauthorized): {e}"
-        return False, "⚠️ Нет ответа от серверов GigaChat."
+        models_to_try = [self.model_name, "GigaChat", "GigaChat-Pro"]
+        scopes_to_try = [self.scope, "GIGACHAT_API_PERS", "GIGACHAT_API_CORP"]
+
+        for sc in scopes_to_try:
+            for md in models_to_try:
+                try:
+                    with GigaChat(credentials=self.credentials, verify_ssl_certs=False, scope=sc) as giga:
+                        response = giga.chat({"model": md, "messages": [{"role": "user", "content": "ping"}]})
+                        if response and response.choices:
+                            self.scope = sc
+                            self.model_name = md
+                            return True, f"✅ Подключено! Модель '{md}' ({sc}) успешно отвечает."
+                except Exception:
+                    continue
+
+        return False, "❌ Ошибка подключения: проверьте токен авторизации или интернет-доступ к api.giga.chat."
 
     def generate(self, system_prompt: str, user_query: str) -> str:
         if not GIGACHAT_AVAILABLE:
             raise ValueError("Пакет gigachat не установлен.")
 
-        kwargs = {
-            "credentials": self.credentials,
-            "verify_ssl_certs": False,
-            "scope": self.scope
-        }
+        models_to_try = [self.model_name, "GigaChat", "GigaChat-Pro"]
+        scopes_to_try = [self.scope, "GIGACHAT_API_PERS", "GIGACHAT_API_CORP"]
 
-        try:
-            with GigaChat(**kwargs) as giga:
-                response = giga.chat({
-                    "model": self.model_name,
-                    "temperature": self.temperature,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_query}
-                    ]
-                })
-                return response.choices[0].message.content
-        except Exception as e:
-            err_str = str(e)
-            if "401" in err_str or "Unauthorized" in err_str:
-                return (
-                    "⚠️ **Ошибка авторизации GigaChat (401 Unauthorized)**\n\n"
-                    "Указанный ключ авторизации не принят сервером GigaChat.\n"
-                    "Пожалуйста, проверьте баланс токенов или укажите свежий ключ."
-                )
-            return f"⚠️ Ошибка вызова GigaChat API: {e}"
+        last_error = ""
+        for sc in scopes_to_try:
+            for md in models_to_try:
+                try:
+                    with GigaChat(credentials=self.credentials, verify_ssl_certs=False, scope=sc) as giga:
+                        response = giga.chat({
+                            "model": md,
+                            "temperature": self.temperature,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_query}
+                            ]
+                        })
+                        self.scope = sc
+                        self.model_name = md
+                        return response.choices[0].message.content
+                except Exception as e:
+                    last_error = str(e)
+                    continue
+
+        if "401" in last_error or "Unauthorized" in last_error:
+            return (
+                "⚠️ **Ошибка авторизации GigaChat (401 Unauthorized)**\n\n"
+                "Ключ `GIGACHAT_CREDENTIALS` отклонен сервером Сбера.\n"
+                "Установите свежий Base64-ключ в Streamlit Secrets или боковой панели."
+            )
+        return f"⚠️ Ошибка вызова GigaChat API: {last_error}"
 
 
 # ============================================
@@ -243,10 +258,10 @@ class PromptusAgent:
 
         # ----- ИНТЕНТ 1: Проверка статуса базы и подключения -----
         if intent == "check_kb_status":
-            gigachat_status = "🟢 Подключен и активен (GigaChat-2-Max)" if self.llm_provider else "🔴 Не подключен"
+            gigachat_status = f"🟢 Подключен и активен ({DEFAULT_GIGACHAT_MODEL} / {DEFAULT_GIGACHAT_SCOPE})" if self.llm_provider else "🔴 Не подключен"
             if kb_available:
                 return (
-                    f"Привет! Система PROMPTUS ({APP_VERSION}) работает отлично.\n\n"
+                    f"Привет! Система PROMPTUS ({APP_VERSION}) работает в штатном режиме.\n\n"
                     f"📊 **Текущий статус подключения:**\n"
                     f"• **ИИ-модель (GigaChat):** {gigachat_status}\n"
                     f"• **Загружено лекций:** **{lecture_count if lecture_count > 0 else 29}** шт.\n"
@@ -335,7 +350,7 @@ class PromptusAgent:
 
 
 # ============================================
-# СТРАНИЦА "О ПРОЕКТЕ PROMPTUS" (ОТДЕЛЬНАЯ)
+# СТРАНИЦА "О ПРОЕКТЕ PROMPTUS"
 # ============================================
 
 def render_about_page():
@@ -364,11 +379,11 @@ def render_about_page():
            Текст разбивается на смысловые фрагменты по 800 символов с перекрытием 150 символов, чтобы сохранить контекст.
         
         3. 🔍 **Мультиязычный векторный поиск (`SentenceTransformers`):**
-           Фрагменты переводиться в математические векторы с помощью модели `paraphrase-multilingual-MiniLM-L12-v2`, 
+           Фрагменты переводятся в математические векторы с помощью модели `paraphrase-multilingual-MiniLM-L12-v2`, 
            которая идеально понимает русскоязычные термины и синонимы.
         
         4. 🗄️ **Векторная база данных (`ChromaDB`):**
-           386 заиндексированных фрагментов хранятся в векторной базе данных `./chroma_db`. Поиск занимает менее 0.1 секунды.
+           386 заиндексированных фрагментов хранятся в векторной базе данных `./chroma_db`.
         
         5. 🧠 **Синтез ответа Ментора (`Сбер GigaChat API`):**
            Найденные лекции передаются в нейросеть GigaChat, которая переформулирует академический текст в понятный, 
@@ -431,6 +446,8 @@ def main():
             DEFAULT_GIGACHAT_KEY
         )
 
+        scope = st.secrets.get("GIGACHAT_SCOPE", DEFAULT_GIGACHAT_SCOPE)
+
         st.divider()
 
         # Редактирование ключа при необходимости
@@ -439,9 +456,7 @@ def main():
             if input_key:
                 gigachat_key = input_key
 
-        scope = st.secrets.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
-
-    # Переход на отдельную страницу "О проекте"
+    # Переход на страницу "О проекте"
     if page == "ℹ️ О проекте PROMPTUS":
         render_about_page()
         return
@@ -451,6 +466,7 @@ def main():
     if "Синтез" in mode and GIGACHAT_AVAILABLE:
         llm_provider = GigaChatMentorProvider(
             credentials=gigachat_key,
+            model_name=DEFAULT_GIGACHAT_MODEL,
             temperature=temperature,
             scope=scope
         )
@@ -474,6 +490,7 @@ def main():
             st.code(f"🔍 Фрагментов: {chunk_count}")
         with col2:
             st.code(f"🔍 GigaChat: {'🟢 Включен' if llm_provider else '🔴 Отключен'}")
+            st.code(f"🔍 Client ID: 019ff78f-c1d7-7959-8788-f4c53c7be3c7")
             st.code(f"🔍 Scope: {scope}")
             
             if llm_provider:
@@ -487,11 +504,11 @@ def main():
     st.title("🧠 PROMPTUS")
     st.caption(f"Ваш персональный ментор по промпт-инжинирингу ({APP_VERSION})")
 
-    # Показываем плашку статуса подключения GigaChat
+    # Вывод статуса подключения GigaChat
     if llm_provider:
-        st.markdown("🟢 **ИИ-ментор (GigaChat):** `Активен и подключен`")
+        st.success("🟢 **ИИ-ментор (GigaChat):** `Подключен и активен (GIGACHAT_API_PERS)`")
     else:
-        st.markdown("🔴 **ИИ-ментор (GigaChat):** `Отключен`")
+        st.error("🔴 **ИИ-ментор (GigaChat):** `Отключен`")
 
     if "messages" not in st.session_state:
         st.session_state.messages = [
