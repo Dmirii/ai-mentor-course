@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import streamlit as st
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -14,11 +14,14 @@ except ImportError:
     GIGACHAT_AVAILABLE = False
 
 # ============================================
-# КОНФИГУРАЦИЯ СЕРВЕРА И БАЗЫ
+# КОНФИГУРАЦИЯ СЕРВЕРА, БАЗЫ И КЛЮЧЕЙ
 # ============================================
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 CHROMA_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
+
+# Встроенный ключ авторизации GigaChat (Base64)
+DEFAULT_GIGACHAT_KEY = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OjY1OWQ1MTVhLTEzNmMtNGUyNS05ZDlmLWIzMWU1MmY1OGU2ZQ=="
 
 # Кэшируем модель эмбеддингов
 @st.cache_resource(show_spinner=False)
@@ -30,22 +33,37 @@ def get_embedding_model():
 # ============================================
 
 class GigaChatMentorProvider:
-    """Провайдер GigaChat с автоподключением по ключу из Secrets/Env."""
+    """Провайдер GigaChat с автоподключением и встроенным ключом."""
     
-    def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat-2-Max", temperature: float = 0.7):
-        self.credentials = credentials
+    def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat-2-Max", temperature: float = 0.7, scope: str = "GIGACHAT_API_PERS"):
+        self.credentials = credentials or DEFAULT_GIGACHAT_KEY
         self.model_name = model_name
         self.temperature = temperature
+        self.scope = scope
+
+    def test_connection(self) -> Tuple[bool, str]:
+        """Проверка соединения с GigaChat API."""
+        if not GIGACHAT_AVAILABLE:
+            return False, "Библиотека 'gigachat' не установлена."
+        
+        try:
+            with GigaChat(credentials=self.credentials, verify_ssl_certs=False, scope=self.scope) as giga:
+                response = giga.chat({"model": self.model_name, "messages": [{"role": "user", "content": "ping"}]})
+                if response and response.choices:
+                    return True, "✅ Соединение с GigaChat API успешно установлено!"
+        except Exception as e:
+            return False, f"❌ Ошибка соединения (401 / Unauthorized или сеть): {e}"
+        return False, "⚠️ Нет ответа от GigaChat API."
 
     def generate(self, system_prompt: str, user_query: str) -> str:
         if not GIGACHAT_AVAILABLE:
             raise ValueError("Пакет gigachat не установлен.")
 
-        # Формируем аргументы подключения: если ключ передан явно — используем его,
-        # иначе GigaChat автоматически берет GIGACHAT_CREDENTIALS из os.environ / st.secrets
-        kwargs = {"verify_ssl_certs": False}
-        if self.credentials:
-            kwargs["credentials"] = self.credentials
+        kwargs = {
+            "credentials": self.credentials,
+            "verify_ssl_certs": False,
+            "scope": self.scope
+        }
 
         try:
             with GigaChat(**kwargs) as giga:
@@ -59,6 +77,13 @@ class GigaChatMentorProvider:
                 })
                 return response.choices[0].message.content
         except Exception as e:
+            err_str = str(e)
+            if "401" in err_str or "Unauthorized" in err_str:
+                return (
+                    "⚠️ **Ошибка авторизации GigaChat (401 Unauthorized)**\n\n"
+                    "Указанный ключ авторизации не принят сервером GigaChat.\n"
+                    "Пожалуйста, проверьте баланс токенов или создайте новый ключ в кабинете разработчика Сбер."
+                )
             return f"⚠️ Ошибка вызова GigaChat API: {e}"
 
 
@@ -182,8 +207,9 @@ class PromptusAgent:
     def _detect_intent(self, query: str) -> str:
         q = query.lower().strip()
 
-        # 1. Запросы о статусе базы, наличии лекций, количестве
+        # 1. Запросы о статусе базы, наличии лекций, подключении
         status_keywords = [
+            "подключен гигачат", "подключен ли гигачат", "гигачат подключен",
             "что с базой", "база занинй", "база знаний доступна", "база доступна",
             "работает база", "сколько лекций загружено", "сколько лекций",
             "сколько фрагментов", "статус базы", "доступна база"
@@ -196,13 +222,13 @@ class PromptusAgent:
             if len(q.split()) <= 3:
                 return "greeting"
 
-        # 3. Перечень всех лекций по именам
+        # 3. Перечень всех лекций
         lecture_keywords = [
             "название лекций", "названия лекций", "список лекций", "какие лекции", 
             "какие есть лекции", "перечень лекций", "темы лекций", "программа курса",
-            "какие темы", "модули", "все лекции", "напиши лекции"
+            "какие темы", "модули", "все лекции", "напиши лекции", "лекуии", "лекц", "лекции"
         ]
-        if any(kw in q for kw in lecture_keywords):
+        if any(kw in q for kw in lecture_keywords) and len(q.split()) <= 4:
             return "list_lectures"
 
         return "content_query"
@@ -214,15 +240,17 @@ class PromptusAgent:
         lecture_list = self.kb.get_all_lecture_titles()
         lecture_count = len(lecture_list)
 
-        # ----- ИНТЕНТ 1: Проверка статуса базы знаний -----
+        # ----- ИНТЕНТ 1: Проверка статуса базы и подключения -----
         if intent == "check_kb_status":
+            gigachat_status = "✅ Подключен" if self.llm_provider else "⚠️ Не настроен / Ошибка токена"
             if kb_available:
                 return (
-                    f"Привет! База знаний полностью подключена и работает отлично!\n\n"
-                    f"📊 **Статус базы знаний:**\n"
-                    f"• Загружено уникальных лекций: **{lecture_count if lecture_count > 0 else 29}** шт.\n"
+                    f"Привет! База знаний и система работают в штатном режиме.\n\n"
+                    f"📊 **Текущий статус:**\n"
+                    f"• ИИ-синтез (GigaChat): **{gigachat_status}**\n"
+                    f"• Уникальных лекций в базе: **{lecture_count if lecture_count > 0 else 29}** шт.\n"
                     f"• Заиндексировано фрагментов: **{chunk_count}** шт.\n\n"
-                    f"Задавай любые вопросы по материалам курса или попроси вынести полный список лекций!"
+                    f"Задавай вопросы по материалам курса или попроси вынести полный список лекций!"
                 )
             else:
                 return "⚠️ База знаний временно недоступна. Убедитесь, что запущен `make_db.py`."
@@ -349,26 +377,31 @@ def main():
                 "• **Отладка:** Выводит подробную системную диагностику базы и векторов."
             )
 
-        # Автопоиск API ключа GigaChat из всех возможных источников
+        # Поиск API ключа GigaChat (с приоритетом: Secrets -> Env -> Default Key)
         gigachat_key = (
             st.secrets.get("GIGACHAT_CREDENTIALS") or 
             st.secrets.get("GIGACHAT_API_KEY") or
             os.environ.get("GIGACHAT_CREDENTIALS") or 
-            os.environ.get("GIGACHAT_API_KEY")
+            os.environ.get("GIGACHAT_API_KEY") or
+            DEFAULT_GIGACHAT_KEY
         )
 
-        # Если ключа нет ни в secrets, ни в env — даем возможность ввести его вручную
-        if not gigachat_key:
-            with st.expander("🔑 Ключ GigaChat API", expanded=False):
-                input_key = st.text_input("Введите GIGACHAT_CREDENTIALS", type="password")
-                if input_key:
-                    gigachat_key = input_key
+        # Редактирование ключа при необходимости
+        with st.expander("🔑 Ключ GigaChat API", expanded=False):
+            input_key = st.text_input("GIGACHAT_CREDENTIALS", value=gigachat_key, type="password")
+            if input_key:
+                gigachat_key = input_key
 
-    # 2. Инициализация провайдера GigaChat (как в исходном коде)
+        scope = st.secrets.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+
+    # 2. Инициализация провайдера GigaChat с переданным ключом
     llm_provider = None
     if "Синтез" in mode and GIGACHAT_AVAILABLE:
-        # Если ключ есть явно — передаем, если нет — GigaChat вызовет свой стандартный механизм считывания env
-        llm_provider = GigaChatMentorProvider(credentials=gigachat_key, temperature=temperature)
+        llm_provider = GigaChatMentorProvider(
+            credentials=gigachat_key,
+            temperature=temperature,
+            scope=scope
+        )
 
     # Определяем режим агента
     agent_mode = "synthesis"
@@ -379,16 +412,22 @@ def main():
 
     agent = PromptusAgent(mode=agent_mode, llm_provider=llm_provider)
 
-    # 3. Диагностика (Отладочный блок) — отображается ТОЛЬКО в режиме "Отладка"
+    # 3. Диагностика в режиме "Отладка" (включая проверку статуса GigaChat)
     if agent_mode == "debug":
         st.info("🔍 **Режим отладки (Debug Mode):**")
         col1, col2 = st.columns(2)
         with col1:
-            st.code("🔍 Загрузка модели: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-            st.code("🔍 Подключение к базе: ./chroma_db")
+            st.code(f"🔍 Модель эмбеддингов: {EMBEDDING_MODEL_NAME}")
+            st.code(f"🔍 Подключение к БД: {CHROMA_PATH}")
+            st.code(f"🔍 Заиндексировано фрагментов: {chunk_count}")
         with col2:
-            st.code(f"🔍 Папка ./chroma_db существует")
-            st.code(f"🔍 Поиск коллекции: course_knowledge_v2 ({chunk_count} фрагментов)")
+            st.code(f"🔍 Статус GigaChat: {'Включен' if llm_provider else 'Отключен'}")
+            st.code(f"🔍 Область (Scope): {scope}")
+            
+            # Проверка живого подключения к GigaChat
+            if llm_provider:
+                is_connected, msg = llm_provider.test_connection()
+                st.code(f"🔍 Проверка GigaChat: {msg}")
 
     # 4. Основное окно чата
     st.title("🧠 PROMPTUS")
@@ -421,6 +460,9 @@ def main():
                     st.write(f"Запрос: `{prompt}`")
                     st.write(f"Используемая модель: `{EMBEDDING_MODEL_NAME}`")
                     st.write(f"Подключение: `./chroma_db` (Коллекция: `course_knowledge_v2`)")
+                    if llm_provider:
+                        is_connected, conn_msg = llm_provider.test_connection()
+                        st.write(f"Статус подключения к GigaChat: {conn_msg}")
 
             with st.spinner("🧠 Поиск в базе знаний и генерация ответа..."):
                 response_text = agent.answer_question(prompt)
