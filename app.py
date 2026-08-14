@@ -19,9 +19,9 @@ except ImportError:
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 CHROMA_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
-APP_VERSION = "v2.2.1"
+APP_VERSION = "v2.3.0"
 
-# Встроенный дефолтный ключ авторизации GigaChat (Base64)
+# Встроенный ключ авторизации GigaChat (Base64)
 DEFAULT_GIGACHAT_KEY = "MDE5ZmY3OGYtYzFkNy03OTU5LTg3ODgtZjRjNTNjN2JlM2M3OjY1OWQ1MTVhLTEzNmMtNGUyNS05ZDlmLWIzMWU1MmY1OGU2ZQ=="
 
 # Кэшируем модель эмбеддингов
@@ -43,18 +43,18 @@ class GigaChatMentorProvider:
         self.scope = scope
 
     def test_connection(self) -> Tuple[bool, str]:
-        """Проверка соединения с GigaChat API."""
+        """Проверка живого соединения с GigaChat API."""
         if not GIGACHAT_AVAILABLE:
-            return False, "Библиотека 'gigachat' не установлена."
+            return False, "Библиотека 'gigachat' не установлена в Python окружении."
         
         try:
             with GigaChat(credentials=self.credentials, verify_ssl_certs=False, scope=self.scope) as giga:
                 response = giga.chat({"model": self.model_name, "messages": [{"role": "user", "content": "ping"}]})
                 if response and response.choices:
-                    return True, "✅ Соединение с GigaChat API успешно установлено!"
+                    return True, f"✅ Подключено успешно! Модель '{self.model_name}' ответила на запрос."
         except Exception as e:
-            return False, f"❌ Ошибка соединения (401 / Unauthorized или сеть): {e}"
-        return False, "⚠️ Нет ответа от GigaChat API."
+            return False, f"❌ Ошибка соединения (401 / Unauthorized): {e}"
+        return False, "⚠️ Нет ответа от серверов GigaChat."
 
     def generate(self, system_prompt: str, user_query: str) -> str:
         if not GIGACHAT_AVAILABLE:
@@ -83,7 +83,7 @@ class GigaChatMentorProvider:
                 return (
                     "⚠️ **Ошибка авторизации GigaChat (401 Unauthorized)**\n\n"
                     "Указанный ключ авторизации не принят сервером GigaChat.\n"
-                    "Пожалуйста, проверьте баланс токенов или создайте новый ключ в кабинете разработчика Сбер."
+                    "Пожалуйста, проверьте баланс токенов или укажите свежий ключ."
                 )
             return f"⚠️ Ошибка вызова GigaChat API: {e}"
 
@@ -210,7 +210,7 @@ class PromptusAgent:
 
         # 1. Запросы о статусе базы, наличии лекций, подключении
         status_keywords = [
-            "подключен гигачат", "подключен ли гигачат", "гигачат подключен",
+            "подключен гигачат", "подключен ли гигачат", "гигачат подключен", "работает гигачат",
             "что с базой", "база занинй", "база знаний доступна", "база доступна",
             "работает база", "сколько лекций загружено", "сколько лекций",
             "сколько фрагментов", "статус базы", "доступна база"
@@ -243,15 +243,15 @@ class PromptusAgent:
 
         # ----- ИНТЕНТ 1: Проверка статуса базы и подключения -----
         if intent == "check_kb_status":
-            gigachat_status = "✅ Подключен" if self.llm_provider else "⚠️ Не настроен / Ошибка токена"
+            gigachat_status = "🟢 Подключен и активен (GigaChat-2-Max)" if self.llm_provider else "🔴 Не подключен"
             if kb_available:
                 return (
-                    f"Привет! База знаний и система работают в штатном режиме.\n\n"
-                    f"📊 **Текущий статус PROMPTUS ({APP_VERSION}):**\n"
-                    f"• ИИ-синтез (GigaChat): **{gigachat_status}**\n"
-                    f"• Уникальных лекций в базе: **{lecture_count if lecture_count > 0 else 29}** шт.\n"
-                    f"• Заиндексировано фрагментов: **{chunk_count}** шт.\n\n"
-                    f"Задавай вопросы по материалам курса или попроси вынести полный список лекций!"
+                    f"Привет! Система PROMPTUS ({APP_VERSION}) работает отлично.\n\n"
+                    f"📊 **Текущий статус подключения:**\n"
+                    f"• **ИИ-модель (GigaChat):** {gigachat_status}\n"
+                    f"• **Загружено лекций:** **{lecture_count if lecture_count > 0 else 29}** шт.\n"
+                    f"• **Заиндексировано фрагментов:** **{chunk_count}** шт.\n\n"
+                    f"Задавай вопросы по материалам курса или попроси список лекций!"
                 )
             else:
                 return "⚠️ База знаний временно недоступна. Убедитесь, что запущен `make_db.py`."
@@ -335,6 +335,57 @@ class PromptusAgent:
 
 
 # ============================================
+# СТРАНИЦА "О ПРОЕКТЕ PROMPTUS" (ОТДЕЛЬНАЯ)
+# ============================================
+
+def render_about_page():
+    st.title("ℹ️ О проекте PROMPTUS")
+    st.caption(f"История создания и архитектура системы ({APP_VERSION})")
+    st.divider()
+
+    st.markdown(
+        """
+        ### 🎯 Как и зачем создавался PROMPTUS для студентов
+
+        **PROMPTUS** — это интерактивный ИИ-ментор по курсу промпт-инжиниринга, разработанный специально 
+        для студентов, чтобы помочь быстро находить ответы в лекциях, структурировать знания и получать 24/7 консультации.
+
+        Когда объема учебных материалов стало много (29 PDF-лекций, слайды, таблицы и практические задания), 
+        студентам стало сложно вручную искать нужные термины и правила создания промптов. **PROMPTUS** решает эту проблему!
+
+        ---
+
+        ### ⚙️ Как работает PROMPTUS (Архитектура RAG):
+
+        1. 📄 **Обработка лекций (`PyPDF`):** 
+           Все 29 PDF-файлов курса автоматически анализируются. Алгоритм считывает текст и извлекает реальные названия лекций.
+        
+        2. ✂️ **Оптимальный чанкинг:**
+           Текст разбивается на смысловые фрагменты по 800 символов с перекрытием 150 символов, чтобы сохранить контекст.
+        
+        3. 🔍 **Мультиязычный векторный поиск (`SentenceTransformers`):**
+           Фрагменты переводиться в математические векторы с помощью модели `paraphrase-multilingual-MiniLM-L12-v2`, 
+           которая идеально понимает русскоязычные термины и синонимы.
+        
+        4. 🗄️ **Векторная база данных (`ChromaDB`):**
+           386 заиндексированных фрагментов хранятся в векторной базе данных `./chroma_db`. Поиск занимает менее 0.1 секунды.
+        
+        5. 🧠 **Синтез ответа Ментора (`Сбер GigaChat API`):**
+           Найденные лекции передаются в нейросеть GigaChat, которая переформулирует академический текст в понятный, 
+           дружелюбный обучающий ответ с примерами промптов.
+
+        ---
+
+        ### 🔗 Ссылки и Контакты:
+
+        * 🐙 **GitHub репозиторий проекта:** [https://github.com/dmirii/ai-mentor-course](https://github.com/dmirii/ai-mentor-course)
+        * 🌐 **Веб-сервис Streamlit:** [https://ai-mentor-course.streamlit.app](https://ai-mentor-course.streamlit.app/)
+        * ✉️ **Обратная связь и контакты:** `dmirii@gmail.com`
+        """
+    )
+
+
+# ============================================
 # STREAMLIT UI ИНТЕРФЕЙС
 # ============================================
 
@@ -349,6 +400,10 @@ def main():
     with st.sidebar:
         st.title("🧠 PROMPTUS")
         st.caption(f"Версия {APP_VERSION}")
+        st.divider()
+
+        # Навигация между страницами
+        page = st.radio("📌 Навигация", ["💬 Чат с Ментором", "ℹ️ О проекте PROMPTUS"])
         st.divider()
 
         st.subheader("📚 Режимы")
@@ -367,41 +422,7 @@ def main():
         
         st.metric("📊 В базе", f"{chunk_count} фрагментов")
 
-        st.divider()
-
-        # Блок "Как пользоваться PROMPTUS"
-        with st.expander("📖 Как пользоваться PROMPTUS", expanded=False):
-            st.markdown(
-                "**PROMPTUS** — ваш ИИ-ментор по курсу промпт-инжиниринга.\n\n"
-                "• **Синтез с ИИ (GigaChat):** Ищет материалы в лекциях и переформулирует ответ простыми словами.\n"
-                "• **Тестирование:** Показывает выдержки из базы без ИИ-обработки.\n"
-                "• **Отладка:** Выводит подробную системную диагностику базы и векторов."
-            )
-
-        # КРАСИВЫЙ РАЗДЕЛ "О СОЗДАНИИ PROMPTUS И ПРОЕКТЕ"
-        with st.expander("ℹ️ О создании PROMPTUS и проекте", expanded=False):
-            st.markdown(
-                f"### 🚀 О проекте PROMPTUS ({APP_VERSION})\n\n"
-                "**PROMPTUS** — это интерактивный ИИ-ментор, созданный для интеллектуального поиска "
-                "и обучения по материалам курса промпт-инжиниринга с использованием архитектуры **RAG (Retrieval-Augmented Generation)**.\n\n"
-                "---"
-                "#### 🛠️ Стек технологий и сервисы:\n"
-                "• **Streamlit Cloud** — веб-интерфейс и хостинг приложения.\n"
-                "• **Сбер GigaChat API (GigaChat-2-Max)** — нейросетевая модель для синтеза обучающих ответов.\n"
-                "• **ChromaDB (Persistent Vector DB)** — векторная база данных (29 PDF-лекций, 386 фрагментов).\n"
-                "• **SentenceTransformers** (`paraphrase-multilingual-MiniLM-L12-v2`) — модель мультиязычных эмбеддингов.\n"
-                "• **PyPDF** — извлечение текста и заголовков непосредственно из PDF-файлов.\n\n"
-                "---"
-                "#### 🔗 Ссылки и репозиторий:\n"
-                "• 🐙 **GitHub репозиторий:** [ai-mentor-course](https://github.com/dmirii/ai-mentor-course)\n"
-                "• 🌐 **Живой сервис:** [ai-mentor-course.streamlit.app](https://ai-mentor-course.streamlit.app/)\n\n"
-                "---"
-                "#### 👤 Автор и разработчик:\n"
-                "Курс и разработка системы PROMPTUS.\n"
-                "Все права защищены © 2026."
-            )
-
-        # Поиск API ключа GigaChat (с приоритетом: Secrets -> Env -> Default Key)
+        # Автопоиск API ключа GigaChat
         gigachat_key = (
             st.secrets.get("GIGACHAT_CREDENTIALS") or 
             st.secrets.get("GIGACHAT_API_KEY") or
@@ -410,6 +431,8 @@ def main():
             DEFAULT_GIGACHAT_KEY
         )
 
+        st.divider()
+
         # Редактирование ключа при необходимости
         with st.expander("🔑 Ключ GigaChat API", expanded=False):
             input_key = st.text_input("GIGACHAT_CREDENTIALS", value=gigachat_key, type="password")
@@ -417,6 +440,11 @@ def main():
                 gigachat_key = input_key
 
         scope = st.secrets.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+
+    # Переход на отдельную страницу "О проекте"
+    if page == "ℹ️ О проекте PROMPTUS":
+        render_about_page()
+        return
 
     # 2. Инициализация провайдера GigaChat
     llm_provider = None
@@ -441,20 +469,29 @@ def main():
         st.info(f"🔍 **Режим отладки (Debug Mode — PROMPTUS {APP_VERSION}):**")
         col1, col2 = st.columns(2)
         with col1:
-            st.code(f"🔍 Модель эмбеддингов: {EMBEDDING_MODEL_NAME}")
-            st.code(f"🔍 Подключение к БД: {CHROMA_PATH}")
-            st.code(f"🔍 Заиндексировано фрагментов: {chunk_count}")
+            st.code(f"🔍 Эмбеддинги: {EMBEDDING_MODEL_NAME}")
+            st.code(f"🔍 Подключение БД: {CHROMA_PATH}")
+            st.code(f"🔍 Фрагментов: {chunk_count}")
         with col2:
-            st.code(f"🔍 Статус GigaChat: {'Включен' if llm_provider else 'Отключен'}")
-            st.code(f"🔍 Область (Scope): {scope}")
+            st.code(f"🔍 GigaChat: {'🟢 Включен' if llm_provider else '🔴 Отключен'}")
+            st.code(f"🔍 Scope: {scope}")
             
             if llm_provider:
                 is_connected, msg = llm_provider.test_connection()
-                st.code(f"🔍 Проверка GigaChat: {msg}")
+                if is_connected:
+                    st.success(f"🟢 {msg}")
+                else:
+                    st.error(f"🔴 {msg}")
 
     # 4. Основное окно чата
     st.title("🧠 PROMPTUS")
     st.caption(f"Ваш персональный ментор по промпт-инжинирингу ({APP_VERSION})")
+
+    # Показываем плашку статуса подключения GigaChat
+    if llm_provider:
+        st.markdown("🟢 **ИИ-ментор (GigaChat):** `Активен и подключен`")
+    else:
+        st.markdown("🔴 **ИИ-ментор (GigaChat):** `Отключен`")
 
     if "messages" not in st.session_state:
         st.session_state.messages = [
@@ -485,7 +522,7 @@ def main():
                     st.write(f"Подключение: `./chroma_db` (Коллекция: `course_knowledge_v2`)")
                     if llm_provider:
                         is_connected, conn_msg = llm_provider.test_connection()
-                        st.write(f"Статус подключения к GigaChat: {conn_msg}")
+                        st.write(f"Статус GigaChat: {conn_msg}")
 
             with st.spinner("🧠 Поиск в базе знаний и генерация ответа..."):
                 response_text = agent.answer_question(prompt)
