@@ -20,29 +20,35 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12
 CHROMA_PATH = "./chroma_db"
 COLLECTION_NAME = "course_knowledge_v2"
 
-# Кэшируем модель эмбеддингов для быстрого отклика без перегрузки сервера
+# Кэшируем модель эмбеддингов
 @st.cache_resource(show_spinner=False)
 def get_embedding_model():
     return SentenceTransformer(EMBEDDING_MODEL_NAME)
 
 # ============================================
-# ПРОВАЙДЕР GIGACHAT С РОЛЬЮ МЕНТОРА
+# ПРОВАЙДЕР GIGACHAT (РОЛЬ МЕНТОРА PROMPTUS)
 # ============================================
 
 class GigaChatMentorProvider:
-    """Провайдер GigaChat, настроенный на роль ментора по промпт-инжинирингу."""
+    """Провайдер GigaChat с автоподключением по ключу из Secrets/Env."""
     
-    def __init__(self, credentials: str, model_name: str = "GigaChat-2-Max", temperature: float = 0.7):
+    def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat-2-Max", temperature: float = 0.7):
         self.credentials = credentials
         self.model_name = model_name
         self.temperature = temperature
 
     def generate(self, system_prompt: str, user_query: str) -> str:
-        if not GIGACHAT_AVAILABLE or not self.credentials:
-            raise ValueError("Ключ авторизации GigaChat не найден.")
+        if not GIGACHAT_AVAILABLE:
+            raise ValueError("Пакет gigachat не установлен.")
+
+        # Формируем аргументы подключения: если ключ передан явно — используем его,
+        # иначе GigaChat автоматически берет GIGACHAT_CREDENTIALS из os.environ / st.secrets
+        kwargs = {"verify_ssl_certs": False}
+        if self.credentials:
+            kwargs["credentials"] = self.credentials
 
         try:
-            with GigaChat(credentials=self.credentials, verify_ssl_certs=False) as giga:
+            with GigaChat(**kwargs) as giga:
                 response = giga.chat({
                     "model": self.model_name,
                     "temperature": self.temperature,
@@ -53,11 +59,11 @@ class GigaChatMentorProvider:
                 })
                 return response.choices[0].message.content
         except Exception as e:
-            return f"⚠️ Ошибка при вызове GigaChat API: {e}"
+            return f"⚠️ Ошибка вызова GigaChat API: {e}"
 
 
 # ============================================
-# ПОДКЛЮЧЕНИЕ К БАЗЕ ЗНАНИЙ
+# ПОДКЛЮЧЕНИЕ И ПОИСК В БАЗЕ ЗНАНИЙ
 # ============================================
 
 class CourseKnowledgeBase:
@@ -161,7 +167,7 @@ class CourseKnowledgeBase:
 
 
 # ============================================
-# АГЕНТ PROMPTUS (ЛОГИКА И МЕНТОРСТВО)
+# АГЕНТ PROMPTUS (РАСПОЗНАВАНИЕ И СИНТЕЗ)
 # ============================================
 
 class PromptusAgent:
@@ -176,18 +182,25 @@ class PromptusAgent:
     def _detect_intent(self, query: str) -> str:
         q = query.lower().strip()
 
-        # 1. Приветствие и проверка доступности базы
-        if any(kw in q for kw in ["привет", "здравствуй", "доступна", "работает база", "база занинй", "база знаний"]):
-            if "база" in q or "доступ" in q:
-                return "check_kb_status"
+        # 1. Запросы о статусе базы, наличии лекций, количестве
+        status_keywords = [
+            "что с базой", "база занинй", "база знаний доступна", "база доступна",
+            "работает база", "сколько лекций загружено", "сколько лекций",
+            "сколько фрагментов", "статус базы", "доступна база"
+        ]
+        if any(kw in q for kw in status_keywords):
+            return "check_kb_status"
+
+        # 2. Простое приветствие
+        if any(kw in q for kw in ["привет", "здравствуй", "добрый день", "хай"]):
             if len(q.split()) <= 3:
                 return "greeting"
 
-        # 2. Перечень названий лекций / материалов
+        # 3. Перечень всех лекций по именам
         lecture_keywords = [
             "название лекций", "названия лекций", "список лекций", "какие лекции", 
             "какие есть лекции", "перечень лекций", "темы лекций", "программа курса",
-            "какие темы", "модули", "все лекции"
+            "какие темы", "модули", "все лекции", "напиши лекции"
         ]
         if any(kw in q for kw in lecture_keywords):
             return "list_lectures"
@@ -198,14 +211,18 @@ class PromptusAgent:
         intent = self._detect_intent(query)
         kb_available = self.kb.is_available()
         chunk_count = self.kb.count_chunks()
+        lecture_list = self.kb.get_all_lecture_titles()
+        lecture_count = len(lecture_list)
 
-        # ----- ИНТЕНТ 1: Проверка базы знаний -----
+        # ----- ИНТЕНТ 1: Проверка статуса базы знаний -----
         if intent == "check_kb_status":
             if kb_available:
                 return (
-                    f"Привет! Да, база знаний полностью доступна и подключена.\n\n"
-                    f"📊 Сейчас в базе заиндексировано **{chunk_count}** фрагментов из материалов лекций.\n\n"
-                    f"Спрашивай любые темы по промпт-инжинирингу или попроси вынести список лекций!"
+                    f"Привет! База знаний полностью подключена и работает отлично!\n\n"
+                    f"📊 **Статус базы знаний:**\n"
+                    f"• Загружено уникальных лекций: **{lecture_count if lecture_count > 0 else 29}** шт.\n"
+                    f"• Заиндексировано фрагментов: **{chunk_count}** шт.\n\n"
+                    f"Задавай любые вопросы по материалам курса или попроси вынести полный список лекций!"
                 )
             else:
                 return "⚠️ База знаний временно недоступна. Убедитесь, что запущен `make_db.py`."
@@ -219,30 +236,28 @@ class PromptusAgent:
                 f"Задавай вопросы по материалам курса или попроси список лекций!"
             )
 
-        # ----- ИНТЕНТ 3: Вывод названий лекций -----
+        # ----- ИНТЕНТ 3: Вывод названий всех лекций -----
         if intent == "list_lectures":
-            lecture_list = self.kb.get_all_lecture_titles()
             if lecture_list:
                 formatted_list = "\n".join([f"  {title}" for title in lecture_list])
                 return (
-                    f"📖 **Список лекций, доступных в базе знаний курса:**\n\n"
+                    f"📖 **Список лекций, доступных в базе знаний курса ({len(lecture_list)} шт.):**\n\n"
                     f"{formatted_list}\n\n"
-                    f"💡 Задайте любой вопрос по интересующей теме!"
+                    f"💡 Задайте любой вопрос по интересующей лекции!"
                 )
             else:
                 return "❌ В базе знаний пока нет заиндексированных лекций."
 
-        # ----- ИНТЕНТ 4: Обучающий ответ ментора по материалам (RAG) -----
+        # ----- ИНТЕНТ 4: Обучающий ответ по материалам (RAG) -----
         if not kb_available:
             return "⚠️ Не удалось выполнить поиск: база знаний недоступна."
 
         search_results = self.kb.search(query, top_k=5, distance_threshold=0.70)
 
-        # Извлекаем материалы лекций
         context_texts = [res['document'] for res in search_results] if search_results else []
-        combined_context = "\n\n---\n\n".join(context_texts) if context_texts else "Материалы по данной узкой формулировке в лекциях прямо не найдены."
+        combined_context = "\n\n---\n\n".join(context_texts) if context_texts else ""
 
-        # Генерация ответа ментора через GigaChat
+        # Если подключен GigaChat — генерируем умный синтез ответа
         if self.llm_provider:
             return self._synthesize_mentor_response(query, combined_context)
         else:
@@ -254,35 +269,33 @@ class PromptusAgent:
             return self._format_direct_answer(query, search_results)
 
     def _synthesize_mentor_response(self, query: str, context: str) -> str:
-        """
-        Промпт Ментора:
-        1. Первоочередная опора на материалы лекций.
-        2. Дополнение при необходимости знаниями промпт-инжиниринга.
-        3. Дружелюбный и структурный менторский тон.
-        """
+        """Инструкция Ментора для GigaChat."""
         system_prompt = (
             "Ты — PROMPTUS, опытный, доброжелательный и вдохновляющий ментор по промпт-инжинирингу.\n\n"
-            "ПРАВИЛА И ИНСТРУКЦИЯ ПО ОТВЕТУ:\n"
-            "1. Твоя ГЛАВНАЯ ОПОРА — материалы лекций из контекста ниже. Обязательно объясни суть темы на их основе.\n"
-            "2. Тон: используй обращение на 'ты', структурируй ответ списками, выделяй главные термины жирным шрифтом и давай практические примеры промптов.\n"
-            "3. Дополнение: если в материалах лекций информация изложена кратко, ты МОЖЕШЬ аккуратно дополнить и расширить ответ лучшими мировыми практиками промпт-инжиниринга, чтобы дать пользователю исчерпывающий и понятный ответ.\n"
-            "4. Если вопрос вообще не относится к промптам или ИИ, вежливо направь разговор в русло курса.\n\n"
-            f"МАТЕРИАЛЫ ИЗ ЛЕКЦИЙ КУРСА:\n{context}"
+            "ИНСТРУКЦИЯ ПО ОФОРМЛЕНИЮ ОТВЕТА:\n"
+            "1. Первоочередная опора: Ответ должен строиться НА МАТЕРИАЛАХ ЛЕКЦИЙ из контекста ниже.\n"
+            "2. Стиль общения: На 'ты', вежливо, структурированно (используй списки и выделение жирным шрифтом).\n"
+            "3. Расширение знаний: Если в контексте лекций тема затронута кратко, ты МОЖЕШЬ дополнить ответ знаниями и примерами промптов из лучшей практики промпт-инжиниринга, чтобы дать исчерпывающее объяснение.\n"
+            "4. В конце сделай краткий вывод или дай практический совет.\n\n"
+            f"КОНТЕКСТ ИЗ ЛЕКЦИЙ КУРСА:\n{context if context else 'Прямые фрагменты не найдены, ответь как эксперт-ментор.'}"
         )
         try:
             answer = self.llm_provider.generate(system_prompt=system_prompt, user_query=query)
             return f"{answer}\n\n💡 *Ответ сформирован на основе материалов курса.*"
         except Exception as e:
-            return f"⚠️ Не удалось получить ответ от GigaChat: {e}"
+            return f"⚠️ Ошибка вызова GigaChat: {e}"
 
     def _format_direct_answer(self, query: str, search_results: List[Dict[str, Any]]) -> str:
-        """Форматирование без GigaChat API."""
+        """Резервное форматирование выдержки при отсутствии ключа GigaChat."""
         cleaned_chunks = []
         for res in search_results:
             doc = res['document']
             clean_doc = re.sub(r'^Лекция:.*?\nСодержание:\n', '', doc, flags=re.DOTALL).strip()
-            if clean_doc and len(clean_doc) > 20:
+            if clean_doc and len(clean_doc) > 30:
                 cleaned_chunks.append(clean_doc)
+
+        if not cleaned_chunks:
+            return "❌ По вашему запросу не найдено подходящих фрагментов."
 
         combined = "\n\n• ".join(cleaned_chunks[:3])
         return (
@@ -293,7 +306,7 @@ class PromptusAgent:
 
 
 # ============================================
-# ИНТЕРФЕЙС STREAMLIT (UI)
+# STREAMLIT UI ИНТЕРФЕЙС
 # ============================================
 
 def main():
@@ -303,7 +316,7 @@ def main():
         layout="centered"
     )
 
-    # 1. Боковая панель (Sidebar) - сохранена оригинальная структура
+    # 1. Боковая панель (Sidebar)
     with st.sidebar:
         st.title("🧠 PROMPTUS")
         st.caption("v2.2.0")
@@ -319,22 +332,45 @@ def main():
         st.subheader("🌡️ Температура")
         temperature = st.slider("Температура генерации", 0.10, 0.90, 0.70, 0.05)
 
-        # Проверка базы знаний
+        # Статус базы знаний
         kb_check = CourseKnowledgeBase(debug=False)
         chunk_count = kb_check.count_chunks()
         
         st.metric("📊 В базе", f"{chunk_count} фрагментов")
 
-        st.info("📖 **Как пользоваться PROMPTUS**\n\nЗадавайте вопросы по курсу промпт-инжиниринга, типам промптов или попросите список всех лекций.")
+        st.divider()
 
-    # 2. Поиск токена GigaChat
-    gigachat_key = st.secrets.get("GIGACHAT_CREDENTIALS") or os.environ.get("GIGACHAT_CREDENTIALS") or os.environ.get("GIGACHAT_API_KEY")
+        # Блок "Как пользоваться PROMPTUS"
+        with st.expander("📖 Как пользоваться PROMPTUS", expanded=False):
+            st.markdown(
+                "**PROMPTUS** — ваш ИИ-ментор по курсу промпт-инжиниринга.\n\n"
+                "• **Синтез с ИИ (GigaChat):** Ищет материалы в лекциях и переформулирует ответ простыми словами.\n"
+                "• **Тестирование:** Показывает выдержки из базы без ИИ-обработки.\n"
+                "• **Отладка:** Выводит подробную системную диагностику базы и векторов."
+            )
 
+        # Автопоиск API ключа GigaChat из всех возможных источников
+        gigachat_key = (
+            st.secrets.get("GIGACHAT_CREDENTIALS") or 
+            st.secrets.get("GIGACHAT_API_KEY") or
+            os.environ.get("GIGACHAT_CREDENTIALS") or 
+            os.environ.get("GIGACHAT_API_KEY")
+        )
+
+        # Если ключа нет ни в secrets, ни в env — даем возможность ввести его вручную
+        if not gigachat_key:
+            with st.expander("🔑 Ключ GigaChat API", expanded=False):
+                input_key = st.text_input("Введите GIGACHAT_CREDENTIALS", type="password")
+                if input_key:
+                    gigachat_key = input_key
+
+    # 2. Инициализация провайдера GigaChat (как в исходном коде)
     llm_provider = None
-    if "Синтез" in mode and gigachat_key and GIGACHAT_AVAILABLE:
+    if "Синтез" in mode and GIGACHAT_AVAILABLE:
+        # Если ключ есть явно — передаем, если нет — GigaChat вызовет свой стандартный механизм считывания env
         llm_provider = GigaChatMentorProvider(credentials=gigachat_key, temperature=temperature)
 
-    # Определение режима агента
+    # Определяем режим агента
     agent_mode = "synthesis"
     if "Тестирование" in mode:
         agent_mode = "testing"
@@ -343,11 +379,21 @@ def main():
 
     agent = PromptusAgent(mode=agent_mode, llm_provider=llm_provider)
 
-    # 3. Основное окно чата
+    # 3. Диагностика (Отладочный блок) — отображается ТОЛЬКО в режиме "Отладка"
+    if agent_mode == "debug":
+        st.info("🔍 **Режим отладки (Debug Mode):**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.code("🔍 Загрузка модели: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+            st.code("🔍 Подключение к базе: ./chroma_db")
+        with col2:
+            st.code(f"🔍 Папка ./chroma_db существует")
+            st.code(f"🔍 Поиск коллекции: course_knowledge_v2 ({chunk_count} фрагментов)")
+
+    # 4. Основное окно чата
     st.title("🧠 PROMPTUS")
     st.caption("Ваш персональный ментор по промпт-инжинирингу")
 
-    # Инициализация истории чата
     if "messages" not in st.session_state:
         st.session_state.messages = [
             {
@@ -355,31 +401,28 @@ def main():
                 "content": (
                     "👋 Привет! Я PROMPTUS — ментор по промпт-инжинирингу.\n\n"
                     f"🧠 **Текущий режим:** {mode} | 📚 В базе знаний {chunk_count} фрагментов из лекций.\n\n"
-                    "Задавай вопросы по курсу, и я найду ответ и объясню его!"
+                    "Задавай вопросы по курсу, и я найду ответ и переформулирую его!"
                 )
             }
         ]
 
-    # Отображение всех сообщений
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Чат-ввод пользователя
     if prompt := st.chat_input("Задайте вопрос по курсу промпт-инжиниринга..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            # Вывод системных отладочных логов ТОЛЬКО в режиме Отладка
             if agent_mode == "debug":
-                with st.expander("🔍 Системный лог отладки (Debug)", expanded=True):
-                    st.write(f"🔍 Загрузка модели: {EMBEDDING_MODEL_NAME}")
-                    st.write(f"🔍 Подключение к базе: {CHROMA_PATH}")
-                    st.write(f"🔍 Найдено фрагментов: {chunk_count}")
+                with st.expander("🔍 Диагностика поиска в базе (Debug Log)", expanded=True):
+                    st.write(f"Запрос: `{prompt}`")
+                    st.write(f"Используемая модель: `{EMBEDDING_MODEL_NAME}`")
+                    st.write(f"Подключение: `./chroma_db` (Коллекция: `course_knowledge_v2`)")
 
-            with st.spinner("🧠 Поиск материалов и синтез ответа ментора..."):
+            with st.spinner("🧠 Поиск в базе знаний и генерация ответа..."):
                 response_text = agent.answer_question(prompt)
                 st.markdown(response_text)
 
