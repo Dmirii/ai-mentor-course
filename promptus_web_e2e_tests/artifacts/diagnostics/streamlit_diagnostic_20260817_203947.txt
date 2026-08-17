@@ -1,0 +1,78 @@
+ДИАГНОСТИКА STREAMLIT СТРАНИЦЫ
+Главный URL: https://ai-mentor-course.streamlit.app/
+Title: PROMPTUS — Ментор по промпт-инжинирингу · Streamlit
+Количество frames: 4
+
+======================================================================
+FRAME 0
+URL: https://ai-mentor-course.streamlit.app/
+Видимый текст:
+
+
+======================================================================
+FRAME 1
+URL: https://qjmnz4vd2y07.statuspage.io/embed/frame
+Видимый текст:
+Status embed installed correctly
+
+This will be shown if an incident or maintenance is posted on your status page.
+View latest updates
+
+======================================================================
+FRAME 2
+URL: https://ai-mentor-course.streamlit.app/~/+/
+Видимый текст:
+🧠 PROMPTUS
+
+Версия v2.3.1
+
+📌 Навигация
+
+💬 Чат с Ментором
+
+ℹ️ О проекте PROMPTUS
+
+📚 Режимы
+
+Выберите режим работы
+
+🌡️ Температура
+
+Температура генерации
+
+0.70
+
+0.10
+
+0.90
+
+📊 В базе
+
+386 фрагментов
+
+keyboard_arrow_right
+
+🔑 Ключ GigaChat API
+
+Fork
+🧠 PROMPTUS
+
+Ваш персональный ментор по промпт-инжинирингу (v2.3.1)
+
+🟢
+
+ИИ-ментор (GigaChat): Подключен и активен (GigaChat-2-Max)
+
+smart_toy
+
+👋 Привет! Я PROMPTUS (v2.3.1) — ментор по промпт-инжинирингу.
+
+🧠 Текущий режим: Синтез с ИИ (GigaChat) | 📚 В базе знаний 386 фрагментов из лекций.
+
+Задавай вопросы по курсу, и я найду ответ и переформулирую его!
+
+======================================================================
+FRAME 3
+URL: about:blank
+Видимый текст:
+
